@@ -47,7 +47,7 @@ void lcm_pm_mpi_publish(char* key, char* value)
 void lcm_pm_mpi_getname(int rank, char* key, char* value)
 {
   char* ret = archive_search(&g_archive, key);
-  strcpy(value, ret);
+  memcpy(value, ret, STRING_LIMIT);
 }
 
 void lcm_pm_mpi_barrier()
