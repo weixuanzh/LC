@@ -76,9 +76,8 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
                                             LCIS_offset_t offset,
                                             LCIS_rkey_t rkey, LCIS_meta_t meta,
                                             void* ctx);
-static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp,
-                                          void* buf, uint32_t size,
-                                          LCIS_mr_t mr, void* ctx);
+static inline void LCISD_post_recv(LCIS_endpoint_t endpoint_pp, void* buf,
+                                   uint32_t size, LCIS_mr_t mr, void* ctx);
 
 #ifdef LCI_USE_SERVER_OFI
 #include "backend/ofi/server_ofi.h"
@@ -86,6 +85,9 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp,
 #ifdef LCI_USE_SERVER_IBV
 #include "backend/ibv/server_ibv.h"
 #include "backend/ibv/lcisi_ibv_detail.h"
+#endif
+#ifdef LCI_USE_SERVER_UCX
+#include "backend/ucx/server_ucx.h"
 #endif
 
 /* Wrapper functions */
@@ -319,14 +321,13 @@ static inline LCI_error_t LCIS_post_putImm(LCIS_endpoint_t endpoint_pp,
   }
   return ret;
 }
-static inline LCI_error_t LCIS_post_recv(LCIS_endpoint_t endpoint_pp, void* buf,
-                                         uint32_t size, LCIS_mr_t mr, void* ctx)
+static inline void LCIS_post_recv(LCIS_endpoint_t endpoint_pp, void* buf,
+                                  uint32_t size, LCIS_mr_t mr, void* ctx)
 {
   LCM_DBG_Log(LCM_LOG_DEBUG, "server",
               "LCIS_post_recv: buf %p size %u mr %p user_context %p\n", buf,
               size, mr.mr_p, ctx);
-  LCI_error_t ret = LCISD_post_recv(endpoint_pp, buf, size, mr, ctx);
-  return ret;
+  return LCISD_post_recv(endpoint_pp, buf, size, mr, ctx);
 }
 
 #endif
