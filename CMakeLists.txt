@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
 add_compile_options(-g)
-set(LCI_SERVER "ofi")
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(
     LCI
@@ -27,6 +26,100 @@ option(LCI_WITH_BENCHMARKS "Build LCI benchmarks" ON)
 option(LCI_WITH_DOC "Build LCI documentation" ON)
 
 # ##############################################################################
+# Figure out which network backend to use
+# ##############################################################################
+set(LCI_SERVER_DEFAULT ibv)
+# If user has explicitly defined LCI_SERVER, we can skip the tests for the
+# default option
+if(NOT DEFINED LCI_SERVER)
+  # If we find the libfabric/cxi provider, set the default backend to OFI
+  execute_process(COMMAND bash "-c" "fi_info -l | grep cxi -q"
+                  RESULT_VARIABLE OFI_CXI_NOT_FOUND)
+  if(NOT OFI_CXI_NOT_FOUND)
+    message(
+      STATUS "Found the libfabric/cxi provider, set the default backend to OFI")
+    set(LCI_SERVER_DEFAULT ofi)
+  endif()
+endif()
+
+set(LCI_SERVER
+    ${LCI_SERVER_DEFAULT}
+    CACHE
+      STRING
+      "Network backend to use. If LCI_FORCE_SERVER is set to OFF (default value),
+    this variable is treated as a hint. Otherwise, it is treated as a requirement."
+)
+set_property(CACHE LCI_SERVER PROPERTY STRINGS ofi ibv)
+option(LCI_FORCE_SERVER
+       "Force LCI to use the network backend specified by LCI_SERVER" OFF)
+set(LCI_OFI_PROVIDER_HINT_DEFAULT
+    ""
+    CACHE
+      STRING
+      "If using the ofi(libfabric) backend, provide a hint for the provider to use"
+)
+
+find_package(OFI)
+find_package(IBV)
+find_package(UCX)
+if(IBV_FOUND)
+  set(FABRIC IBV)
+else()
+  if(UCX_FOUND)
+    set(FABRIC UCX)
+  else()
+    if(OFI_FOUND)
+      set(FABRIC OFI)
+    else()
+      message(FATAL_ERROR "Find neither libfabric nor libibverbs nor libucx. Give up!")
+    endif()
+  endif()
+endif()
+
+if(LCI_SERVER STREQUAL "ofi")
+  if(OFI_NOT_FOUND)
+    message(FATAL_ERROR "OFI forced as server but not found. Give up!")
+  endif()
+  set(FABRIC OFI)
+elseif(LCI_SERVER STREQUAL "ibv")
+  if(IBV_NOT_FOUND)
+    message(FATAL_ERROR "IBV forced as server but not found. Give up!")
+  endif()
+  set(FABRIC IBV)
+elseif(LCI_SERVER STREQUAL "ucx")
+  if(UCX_NOT_FOUND)
+    message(FATAL_ERROR "UCX forced as server but not found. Give up!")
+  endif()
+  set(FABRIC ucx)
+endif()
+string(TOUPPER ${LCI_SERVER} LCI_SERVER_UPPER)
+if(LCI_FORCE_SERVER AND NOT LCI_SERVER_UPPER STREQUAL FABRIC)
+  message(
+    FATAL_ERROR
+      "LCI_FORCE_SERVER is set but the only available backend (${FABRIC})
+  is different from what is set in LCI_SERVER (${LCI_SERVER_UPPER}). Give up!")
+endif()
+set(LCI_FABRIC
+    ${FABRIC}
+    CACHE
+      STRING
+      "Used as an output variable if LCI is included in a larger project via FetchContent"
+      FORCE)
+
+if(FABRIC STREQUAL OFI)
+  set(LCI_USE_SERVER_OFI ON)
+  message(STATUS "Use ofi(libfabric) as the network backend")
+else()
+  if(FABRIC STREQUAL ucx)
+    set(LCI_USE_SERVER_UCX ON)
+    message(STATUS "Use ucx as the network backend")
+  else()
+    set(LCI_USE_SERVER_IBV ON)
+    message(STATUS "Use ibv(libibverbs) as the network backend")
+  endif()
+endif()
+
+# ##############################################################################
 # LCI Optimization Options
 # ##############################################################################
 option(LCI_DEBUG "LCI Debug Mode" OFF)
@@ -36,10 +129,12 @@ option(LCI_USE_MUTEX_CQ
 option(LCI_ENABLE_MULTITHREAD_PROGRESS
        "LCI_progress can be called by multiple threads simultaneously" OFF)
 option(LCI_IBV_ENABLE_TRY_LOCK_QP
-       "Try to lock the queue pair before access it." ON)
+       "Try to lock the IBV queue pair before access it." ON)
+option(LCI_OFI_ENABLE_TRY_LOCK_EP
+       "Try to lock the OFI endpoint before access it." ON)
 option(LCI_CONFIG_USE_ALIGNED_ALLOC "Enable memory alignment" ON)
 set(LCI_USE_DREG_DEFAULT
-    1
+    ${LCI_USE_SERVER_IBV}
     CACHE STRING "Whether to use registration cache")
 set(LCI_PACKET_SIZE_DEFAULT
     12288
@@ -56,6 +151,10 @@ set(LCI_SERVER_MAX_CQES_DEFAULT
 set(LCI_SERVER_NUM_PKTS_DEFAULT
     8192
     CACHE STRING "Number of packets")
+set(LCI_MT_BACKEND_DEFAULT
+    "hashqueue"
+    CACHE STRING "The default matching table backend to use.")
+set_property(CACHE LCI_MT_BACKEND_DEFAULT PROPERTY STRINGS hash queue hashqueue)
 set(LCI_CACHE_LINE
     64
     CACHE STRING "Size of cache line (bytes)")
@@ -84,10 +183,9 @@ if(LCI_OPTIMIZE_FOR_NATIVE)
   endif()
 endif()
 
-check_c_compiler_flag("-mavx" COMPILER_SUPPORTS_MAVX)
-option(LCI_USE_AVX "Use GCC vector extension for the immediate field"
-       ${COMPILER_SUPPORTS_MAVX})
+option(LCI_USE_AVX "Use GCC vector extension for the immediate field" OFF)
 if(LCI_USE_AVX)
+  check_c_compiler_flag("-mavx" COMPILER_SUPPORTS_MAVX)
   if(NOT COMPILER_SUPPORTS_MAVX)
     message(
       FATAL_ERROR
@@ -135,70 +233,6 @@ if("glob" IN_LIST LCI_EP_CE)
 endif()
 
 # ##############################################################################
-# Figure out which network backend to use
-# ##############################################################################
-set(LCI_SERVER
-    ibv
-    CACHE
-      STRING
-      "Network backend to use. If LCI_FORCE_SERVER is set to OFF (default value),
-    this variable is treated as a hint. Otherwise, it is treated as a requirement."
-)
-set_property(CACHE LCI_SERVER PROPERTY STRINGS ofi ibv)
-option(LCI_FORCE_SERVER
-       "Force LCI to use the network backend specified by LCI_SERVER" OFF)
-set(LCI_OFI_PROVIDER_HINT_DEFAULT
-    ""
-    CACHE
-      STRING
-      "If using the ofi(libfabric) backend, provide a hint for the provider to use"
-)
-
-find_package(OFI)
-find_package(IBV)
-find_package(ucx REQUIRED CONFIG)
-message(found_UCX=${ucx_DIR})
-if(IBV_FOUND AND OFI_FOUND)
-  if(LCI_SERVER STREQUAL "ofi")
-    set(FABRIC ucx)
-  else()
-    set(FABRIC IBV)
-  endif()
-elseif(IBV_FOUND)
-  set(FABRIC IBV)
-elseif(OFI_FOUND)
-  set(FABRIC ucx)
-else()
-  message(FATAL_ERROR "Find neither libfabric nor libibverbs. Give up!")
-endif()
-string(TOUPPER ${LCI_SERVER} LCI_SERVER_UPPER)
-if(LCI_FORCE_SERVER AND NOT LCI_SERVER_UPPER STREQUAL FABRIC)
-  message(
-    FATAL_ERROR
-      "LCI_FORCE_SERVER is set but the only available backend (${FABRIC})
-  is different from what is set in LCI_SERVER (${LCI_SERVER_UPPER}). Give up!")
-endif()
-set(LCI_FABRIC
-    ${FABRIC}
-    CACHE
-      STRING
-      "Used as an output variable if LCI is included in a larger project via FetchContent"
-      FORCE)
-
-if(FABRIC STREQUAL OFI)
-  set(LCI_USE_SERVER_OFI ON)
-  message(STATUS "Use ofi(libfabric) as the network backend")
-elseif(FABRIC STREQUAL IBV)
-  set(LCI_USE_SERVER_IBV ON)
-  message(STATUS "Use ibv(libibverbs) as the network backend")
-else()
-  set(LCI_USE_SERVER_UCX ON)
-  message(STATUS "Use UCX as the network backend")
-endif()
-
-message(Use_UCX=${LCI_USE_SERVER_UCX})
-
-# ##############################################################################
 # Find More Libraries
 # ##############################################################################
 find_package(Threads REQUIRED)
@@ -218,7 +252,12 @@ set_target_properties(
              C_STANDARD 11
              C_EXTENSIONS ON)
 target_compile_definitions(LCI PRIVATE _GNU_SOURCE)
-target_link_libraries(LCI PUBLIC Threads::Threads ${FABRIC}::ucp)
+if(FABRIC STREQUAL ucx)
+  target_link_libraries(LCI PUBLIC Threads::Threads ${FABRIC}::ucp)
+else()
+  target_link_libraries(LCI PUBLIC Threads::Threads ${FABRIC}::${FABRIC})
+endif()
+
 if(LCI_USE_AVX)
   target_compile_options(LCI PUBLIC -mavx)
 endif()
