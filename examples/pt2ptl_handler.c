@@ -50,6 +50,13 @@ void recv_handler(LCI_request_t request)
 
 int main(int argc, char** args)
 {
+
+  // int z = 0;
+  // int f = 0;
+  // while (f == 0) {
+  //   z++;
+  // }
+
   // Number of messages to send
   int num_msgs = 10;
   int msgs_size = 65536;

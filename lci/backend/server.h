@@ -16,7 +16,11 @@ typedef struct LCIS_mr_t {
   size_t length;
 } LCIS_mr_t;
 
+#ifdef LCI_USE_SERVER_UCX
+typedef void* LCIS_rkey_t;
+#else
 typedef uint64_t LCIS_rkey_t;
+#endif
 typedef uint32_t LCIS_meta_t;  // immediate data
 enum LCIS_opcode_t {
   LCII_OP_SEND,
