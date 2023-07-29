@@ -15,7 +15,8 @@ void LCISD_server_init(LCI_device_t device, LCIS_server_t* s)
     status = ucp_config_read(NULL, NULL, &config);
     ucp_params_t params;
     params.field_mask = UCP_PARAM_FIELD_FEATURES;
-    params.features = UCP_FEATURE_TAG;
+    params.features = UCP_FEATURE_TAG |
+                      UCP_FEATURE_RMA;
     ucp_context_h context;
     //printf("ucp_error:%s\n", ucs_status_string(status));
     status = ucp_init(&params, config, &context);
@@ -67,10 +68,22 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     am_params.field_mask = UCP_AM_HANDLER_PARAM_FIELD_CB |
                            UCP_AM_HANDLER_PARAM_FIELD_ID |
                            UCP_AM_HANDLER_PARAM_FIELD_ARG;
-    am_params.flags = CQ_AM_ID;
+    am_params.id = CQ_AM_ID;
     am_params.cb = am_rma_handler;
     am_params.arg = endpoint_pp;
-    ucp_worker_set_am_recv_handler(worker, &am_params);
+    ucs_status_t tmp;
+    tmp = ucp_worker_set_am_recv_handler(worker, &am_params);
+    printf("\n%s", ucs_status_string(tmp));
+
+    // ucp_am_handler_param_t am_params1;
+    // am_params1.field_mask = UCP_AM_HANDLER_PARAM_FIELD_CB |
+    //                        UCP_AM_HANDLER_PARAM_FIELD_ID |
+    //                        UCP_AM_HANDLER_PARAM_FIELD_ARG;
+    // am_params1.id = 17;
+    // am_params1.cb = am_failure_handler;
+    // am_params1.arg = endpoint_pp;
+    // tmp = ucp_worker_set_am_recv_handler(worker, &am_params1);
+
 
     // Exchange endpoint address
     endpoint_p->peers = LCIU_malloc(sizeof(ucp_ep_h) * LCI_NUM_PROCESSES);
