@@ -138,22 +138,7 @@ static void put_handler(void* request, ucs_status_t status, void* args) {
   LCISI_cq_entry* cq_entry = (LCISI_cq_entry*) cb_args->entry;
   LCISI_endpoint_t* ep = (LCISI_endpoint_t*) cq_entry->ep;
 
-  // Call ucp_ep_flush to complete the RDMA write operation
-  // A blocking call is required theoretically, but a non-blocking one works for now
-  // ucp endpoint to flush is stored in cb_args->buf
-  void* flush_request;
-  ucp_request_param_t flush_params;
-  flush_params.op_attr_mask = 0;
-  flush_request = ucp_ep_flush_nbx(cb_args->buf, &flush_params);
-  LCM_Assert(!UCS_PTR_IS_ERR(flush_request), "Error when attempting to complete RDMA write!");
-  // if (flush_request != NULL) {
-  //   ucs_status_t flush_status = UCS_INPROGRESS;
-  //   while(flush_status == UCS_INPROGRESS) {
-  //     ucp_worker_progress(ep->worker);
-  //     flush_status = ucp_request_check_status(flush_request);
-  //   }
-  //   ucp_request_free(flush_request);
-  // }
+  // Seems like no need to call ucp_ep_flush
 
   // Add entry to completion queue
   push_cq(cq_entry);
@@ -262,10 +247,10 @@ static inline LCIS_rkey_t LCISD_rma_rkey(LCIS_mr_t mr)
   status = ucp_rkey_pack(wrapper->context, wrapper->memh, &packed_addr, &packed_size);
   LCM_Assert(!UCS_PTR_IS_ERR(status), "Error in packing rkey!");
   //LCM_Assert(packed_size <= sizeof(LCIS_rkey_t), "Size exceeds limit!");
-  LCIS_rkey_t res = malloc(packed_size);
-  memset(res, 0, packed_size);
+  LCIS_rkey_t* res = malloc(sizeof(__uint128_t));
+  memset(res, 0, sizeof(__uint128_t));
   memcpy(res, packed_addr, packed_size);
-  return packed_addr;
+  return *res;
 }
 
 // Not necessary if serve send/recv are completed in callback functions
@@ -465,7 +450,10 @@ static inline LCI_error_t LCISD_post_puts(LCIS_endpoint_t endpoint_pp, int rank,
   // Unpack the packed rkey
   ucp_rkey_h rkey_ptr;
   ucs_status_t status;
-  status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], rkey, &rkey_ptr);
+  void* tmp_rkey = malloc(sizeof(__uint128_t));
+  memset(tmp_rkey, 0, sizeof(__uint128_t));
+  strcpy(tmp_rkey, &rkey);
+  status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
   LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
   // Prepare CQ entry associated with this operation
@@ -519,7 +507,10 @@ static inline LCI_error_t LCISD_post_put(LCIS_endpoint_t endpoint_pp, int rank,
   // Unpack the packed rkey
   ucp_rkey_h rkey_ptr;
   ucs_status_t status;
-  status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], rkey, &rkey_ptr);
+  void* tmp_rkey = malloc(sizeof(__uint128_t));
+  memset(tmp_rkey, 0, sizeof(__uint128_t));
+  strcpy(tmp_rkey, &rkey);
+  status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
   LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
   // Prepare CQ entry associated with this operation
@@ -550,7 +541,7 @@ static inline LCI_error_t LCISD_post_put(LCIS_endpoint_t endpoint_pp, int rank,
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
-  ucp_worker_progress(endpoint_p->worker);
+  //ucp_worker_progress(endpoint_p->worker);
   LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
 
   // Use callback in case operation is completed immediately
@@ -575,7 +566,10 @@ static inline LCI_error_t LCISD_post_putImms(LCIS_endpoint_t endpoint_pp,
   // Unpack the packed rkey
   ucp_rkey_h rkey_ptr;
   ucs_status_t status;
-  status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], rkey, &rkey_ptr);
+  void* tmp_rkey = malloc(sizeof(__uint128_t));
+  memset(tmp_rkey, 0, sizeof(__uint128_t));
+  strcpy(tmp_rkey, &rkey);
+  status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
   LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
   // Prepare CQ entry associated with this operation
@@ -636,7 +630,10 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
   // Unpack the packed rkey
   ucp_rkey_h rkey_ptr;
   ucs_status_t status;
-  status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], rkey, &rkey_ptr);
+  void* tmp_rkey = malloc(sizeof(__uint128_t));
+  memset(tmp_rkey, 0, sizeof(__uint128_t));
+  strcpy(tmp_rkey, &rkey);
+  status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
   LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
   // Prepare CQ entry associated with this operation
