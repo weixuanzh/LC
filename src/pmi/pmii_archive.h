@@ -69,9 +69,9 @@ static void archive_push(Archive_t* archive, char* key, char* value)
     }
   }
   char* key_in = malloc(STRING_LIMIT);
-  memcpy(key_in, key, STRING_LIMIT);
+  strcpy(key_in, key);
   char* value_in = malloc(STRING_LIMIT);
-  memcpy(value_in, value, STRING_LIMIT);
+  strcpy(value_in, value);
   archive->ptr[archive->size].key = key_in;
   archive->ptr[archive->size].value = value_in;
   ++archive->size;

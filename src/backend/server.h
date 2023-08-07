@@ -17,7 +17,7 @@ typedef struct LCIS_mr_t {
 } LCIS_mr_t;
 
 #ifdef LCI_USE_SERVER_UCX
-typedef void* LCIS_rkey_t;
+typedef __uint128_t LCIS_rkey_t;
 #else
 typedef uint64_t LCIS_rkey_t;
 #endif
