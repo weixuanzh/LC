@@ -39,6 +39,7 @@ void decode_ucp_address1(char* encoded_addrs, int original_length, uint8_t* null
     }
 }
 
+// Unused since encoded address is greater than 256 bytes (PMI string limit)
 // Decodes a ucp_address into a series of hex decimal number
 // Delimiters: '-' stands for null in address, ',' indicates that the number continues
 // Possible output: 1435ab-52fa234553ba3f12f,3fa-453d1-
@@ -85,6 +86,7 @@ void encode_ucp_address(void* my_addrs, int addrs_length, char* encoded_value) {
     }
 }
 
+// Unused since encoded address is greater than 256 bytes (PMI string limit)
 void decode_ucp_address(void* encoded_addrs, size_t encoded_length, void* decoded_addrs) {
     int segment_length = 0;
     int value_offset = 0;
@@ -122,11 +124,12 @@ void LCISD_server_init(LCI_device_t device, LCIS_server_t* s)
     ucp_params_t params;
     params.field_mask = UCP_PARAM_FIELD_FEATURES;
     params.features = UCP_FEATURE_TAG |
-                      UCP_FEATURE_RMA;
+                      UCP_FEATURE_RMA |
+                      UCP_FEATURE_AM;
     ucp_context_h context;
     //printf("ucp_error:%s\n", ucs_status_string(status));
     status = ucp_init(&params, config, &context);
-    ucp_context_print_info(context, stdout);
+    //ucp_context_print_info(context, stdout);
     server->context = context;
     server->endpoint_count = 0;
     
@@ -166,8 +169,13 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     LCM_Assert(status == UCS_OK, "Error in creating UCP worker!");
     endpoint_p->worker = worker;
 
+    // Create lock
+    #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
+    LCIU_spinlock_init(&(endpoint_p->lock))
+    #endif
+
     // Create completion queue
-    LCM_dq_init(&endpoint_p->completed_ops, 2 * LCI_CQ_MAX_POLL);
+    LCM_dq_init(&endpoint_p->completed_ops, 8192);
     
     // Set handler for active message (for putImm and putsImm)
     // Currently not useful
@@ -179,7 +187,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     am_params.arg = endpoint_pp;
     ucs_status_t tmp;
     tmp = ucp_worker_set_am_recv_handler(worker, &am_params);
-    printf("\n%s", ucs_status_string(tmp));
+    //printf("\n%s", ucs_status_string(tmp));
 
     // Exchange endpoint address
     endpoint_p->peers = LCIU_malloc(sizeof(ucp_ep_h) * LCI_NUM_PROCESSES);
@@ -272,7 +280,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
         LCM_Assert(status1 == UCS_OK, "Error in creating peer endpoints!");
         (endpoint_p->peers)[i] = peer;
     }
-    printf("endpoint %d in rank %d has been created", endpoint_id, LCI_RANK);
+    //printf("endpoint %d in rank %d has been created", endpoint_id, LCI_RANK);
     fflush(stdout);
     lcm_pm_barrier();
 }
