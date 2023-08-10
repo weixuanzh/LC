@@ -6,6 +6,7 @@
 #define CQ_AM_ID 1234
 #define CQ_RECV_ID 5678
 #define COMMON_TAG 1145
+#define CQ_LENGTH 8192
 struct LCISI_endpoint_t;
 
 typedef enum {
@@ -43,13 +44,23 @@ typedef struct __attribute__((aligned(LCI_CACHE_LINE))) LCISI_endpoint_t {
   ucp_ep_h* peers;
   size_t* addrs_length;
   LCM_dequeue_t completed_ops;
+  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
+  LCIU_spinlock_t lock;
+  #endif
 } LCISI_endpoint_t;
 
 // Add a entry to completion queue
 static void push_cq(void* entry) {
   LCISI_cq_entry* cq_entry = (LCISI_cq_entry*) entry;
   LCISI_endpoint_t* ep = (LCISI_endpoint_t*) cq_entry->ep;
-  LCM_dq_push_top(&(ep->completed_ops), entry);
+  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
+  LCIU_acquire_spinlock(&(ep->lock));
+  #endif
+  int status = LCM_dq_push_top(&(ep->completed_ops), entry);
+  LCM_Assert(status != LCM_RETRY, "Too many entries in CQ!");
+  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
+  LCIU_release_spinlock(&(ep->lock));
+  #endif
 }
 
 // Struct to use when passing arguments to recv handler
@@ -100,7 +111,6 @@ static void recv_handler(void* request, ucs_status_t status, const ucp_tag_recv_
 
   }
 
-
   // Add entry to CQ
   ucs_status_t unused;
   push_cq(cq_entry);
@@ -108,7 +118,9 @@ static void recv_handler(void* request, ucs_status_t status, const ucp_tag_recv_
   // Free resources
   free(cb_args->packed_buf);
   free(cb_args);
-  ucp_request_free(request);
+  if (request != NULL) {
+    ucp_request_free(request);
+  }
 }
 
 // Invoked after send is completed
@@ -138,7 +150,6 @@ static void put_handler(void* request, ucs_status_t status, void* args) {
   LCISI_cq_entry* cq_entry = (LCISI_cq_entry*) cb_args->entry;
   LCISI_endpoint_t* ep = (LCISI_endpoint_t*) cq_entry->ep;
 
-  // Seems like no need to call ucp_ep_flush
 
   // Add entry to completion queue
   push_cq(cq_entry);
@@ -181,7 +192,7 @@ static ucs_status_t am_rma_handler(void* arg, const void* header, size_t header_
   memcpy(&(cq_entry->imm_data), tmp + sizeof(int), sizeof(LCIS_meta_t));
   cq_entry->length = length;
   cq_entry->ctx = NULL;
-  LCM_dq_push_top(&(ep->completed_ops), cq_entry);
+  push_cq(cq_entry);
   return UCS_OK;
 }
 
@@ -258,21 +269,49 @@ static inline int LCISD_poll_cq(LCIS_endpoint_t endpoint_pp,
                                 LCIS_cq_entry_t* entry)
 {
   LCISI_endpoint_t* endpoint_p = (LCISI_endpoint_t*)endpoint_pp;
+
+  // Call ucp_flush to complete RMA operations
+  // Test to run without flush
+  // ucp_request_param_t flush_param;
+  // void* flush_request;
+  // flush_param.op_attr_mask = 0;
+  // flush_request = ucp_worker_flush_nbx(endpoint_p->worker, &flush_param);
+  // if (flush_request == NULL) {
+      
+  // } else {
+  //   LCM_Assert(!UCS_PTR_IS_ERR(flush_request), "error in flushing worker!");
+  //   ucs_status_t flush_status;
+  //   do {
+  //     ucp_worker_progress(endpoint_p->worker);
+  //     flush_status = ucp_request_check_status(flush_request);
+  //   } while (flush_status == UCS_INPROGRESS);
+  //     ucp_request_free(flush_request);
+  // }
+
   ucp_worker_progress(endpoint_p->worker);
 
-  int completed_ops = 0;
-  for (int i = 0; i < LCM_dq_size(endpoint_p->completed_ops); i++) {
+  int num_entries = 0;
+
+  // Use while loop
+  // Keep below maximum number
+  // Lock when poping bottom
+  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
+  LCIU_acquire_spinlock(&(endpoint_p->lock));
+  #endif
+  while (num_entries < LCI_CQ_MAX_POLL && LCM_dq_size(endpoint_p->completed_ops) > 0) {
     LCISI_cq_entry* cq_entry = (LCISI_cq_entry*) LCM_dq_pop_bot(&(endpoint_p->completed_ops));
-    entry[i].ctx = cq_entry->ctx;
-    entry[i].imm_data = cq_entry->imm_data;
-    entry[i].length = cq_entry->length;
-    entry[i].opcode = cq_entry->op;
-    entry[i].rank = cq_entry->rank;
-    completed_ops++;
+    entry[num_entries].ctx = cq_entry->ctx;
+    entry[num_entries].imm_data = cq_entry->imm_data;
+    entry[num_entries].length = cq_entry->length;
+    entry[num_entries].opcode = cq_entry->op;
+    entry[num_entries].rank = cq_entry->rank;
+    num_entries++;
     free(cq_entry);
-    
   }
-  return completed_ops;
+  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
+  LCIU_release_spinlock(&(endpoint_p->lock));
+  #endif
+  return num_entries;
 }
 
 // TODO: return different LCI_error according to the status of ucp operation
@@ -305,25 +344,28 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp, void* buf
   recv_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
                             UCP_OP_ATTR_FIELD_MEMORY_TYPE |
                             UCP_OP_ATTR_FIELD_USER_DATA |
-                            UCP_OP_ATTR_FIELD_MEMH;
+                            UCP_OP_ATTR_FIELD_RECV_INFO;
   recv_param.cb.recv = recv_handler;
-  recv_param.memh = ((memh_wrapper*) mr.mr_p)->memh;
+  //recv_param.memh = ((memh_wrapper*) mr.mr_p)->memh;
   recv_param.memory_type = UCS_MEMORY_TYPE_HOST;
   recv_param.user_data = cb_args;
-
+  recv_param.recv_info.tag_info = malloc(sizeof(ucp_tag_recv_info_t));
+  
   // Receive message, check for errors
   request = ucp_tag_recv_nbx(endpoint_p->worker, packed_buf, size + sizeof(LCIS_meta_t) + sizeof(int), COMMON_TAG, 0, &recv_param);
-  ucp_worker_progress(endpoint_p->worker);
   if (UCS_PTR_IS_ERR(request)) {
     LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in recving message!");
     return LCI_ERR_FATAL;
   }
 
+  // Seems like not working
+  // recv_info.tag_info is not updated correctly
   // Use callback in case operation is completed immediately
   if (request == UCS_OK) {
     ucs_status_t unused;
-    recv_handler(NULL, unused, NULL, cb_args);
+    recv_handler(NULL, unused, recv_param.recv_info.tag_info, cb_args);
   }
+  free(recv_param.recv_info.tag_info);
   return LCI_OK;
 
 }
@@ -368,7 +410,6 @@ static inline LCI_error_t LCISD_post_sends(LCIS_endpoint_t endpoint_pp,
 
   // Send message, check for errors
   request = ucp_tag_send_nbx(endpoint_p->peers[rank], packed_buf, size + sizeof(LCIS_meta_t) + sizeof(int), COMMON_TAG, &send_param);
-  ucp_worker_progress(endpoint_p->worker);
   if (UCS_PTR_IS_ERR(request)) {
     LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in posting sends!");
     return LCI_ERR_FATAL;
@@ -424,7 +465,6 @@ static inline LCI_error_t LCISD_post_send(LCIS_endpoint_t endpoint_pp, int rank,
   
   // Send message, check for errors
   request = ucp_tag_send_nbx(endpoint_p->peers[rank], packed_buf, size + sizeof(LCIS_meta_t) + sizeof(int), COMMON_TAG, &send_param);
-  ucp_worker_progress(endpoint_p->worker);
   if (UCS_PTR_IS_ERR(request)) {
     LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in posting send!");
     return LCI_ERR_FATAL;
@@ -484,7 +524,6 @@ static inline LCI_error_t LCISD_post_puts(LCIS_endpoint_t endpoint_pp, int rank,
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
-  ucp_worker_progress(endpoint_p->worker);
   LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
 
   // Use callback in case operation is completed immediately
@@ -605,7 +644,6 @@ static inline LCI_error_t LCISD_post_putImms(LCIS_endpoint_t endpoint_pp,
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
-  ucp_worker_progress(endpoint_p->worker);
   LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
 
   // Use callback in case operation is completed immediately
@@ -669,7 +707,6 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
-  ucp_worker_progress(endpoint_p->worker);
   LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
 
   // Use callback in case operation is completed immediately
