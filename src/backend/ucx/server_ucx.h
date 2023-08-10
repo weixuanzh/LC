@@ -75,30 +75,55 @@ typedef struct __attribute__((aligned(LCI_CACHE_LINE))) LCISI_cb_args {
   void* packed_buf;
 } LCISI_cb_args;
 
+// Takes address to the start of an allocated recv buffer and allocated size
+// Outputs the length of the buffer which contains meaningful data (not all 0 bytes)
+static size_t find_end(char* recv_buf, size_t buf_size) {
+  for (int i = buf_size - 1; i >= 0; i--) {
+    if (recv_buf[i] == '-') {
+      return i;
+    }
+  }
+  LCM_Assert(false, "Error in obtaining buffer end!");
+  return 0;
+}
+
 // Called when ucp receives a message
 // Unpack received data, update completion queue, free allocated buffers
 static void recv_handler(void* request, ucs_status_t status, const ucp_tag_recv_info_t *tag_info, void* args) {
   LCISI_cb_args* cb_args = (LCISI_cb_args*) args;
   LCISI_cq_entry* cq_entry = (LCISI_cq_entry*) (cb_args->entry);
   LCISI_endpoint_t* ep = (LCISI_endpoint_t*) (cq_entry->ep);
+  
+  int msg_length = 0;
+  // Check if recv is completed immediately (when tag_info is null)
+  if (tag_info == NULL) {
+    // correct length should be found explicitly
+    msg_length = find_end(cb_args->packed_buf, cb_args->size) + 1; 
+    cq_entry->length = msg_length - sizeof(LCIS_meta_t) - sizeof(int) - 1;
+
+  } else {
+    // Check if user provided buffer size is enough to receive message
+    LCM_Assert(cb_args->size >= tag_info->length, "Message size greater than allocated buffer!");
+    // Check if received message length makes sense (cannot be too short)
+    LCM_Assert(tag_info->length >= sizeof(LCIS_meta_t) + sizeof(int) + 1, "Message length is too short to be valid!");
+    msg_length = tag_info->length;
+    cq_entry->length = tag_info->length - sizeof(LCIS_meta_t) - sizeof(int) - 1;
+  }
 
   // Copy received message and LCIS_meta to correct locations
-  // Check if user provided buffer size is enough to receive message
-  LCM_Assert(cb_args->size >= tag_info->length, "Message size greater than allocated buffer!");
-  cq_entry->length = tag_info->length - sizeof(LCIS_meta_t) - sizeof(int);
   char* src_buf = (char*) cb_args->packed_buf;
 
   if (cq_entry->length != 0) {
     // When there is data other than rank and LCIS_meta (normal two-sided send and recv)
     cq_entry->op = LCII_OP_RECV;
-    // Last bytes of received data are source rank
-    char* addr_start = src_buf + tag_info->length - sizeof(int);
+    // Last bytes (excluding the terminating char) of received data are source rank
+    char* addr_start = src_buf + msg_length - sizeof(int) - 1;
     memcpy(&(cq_entry->rank), addr_start, sizeof(int));
     // Middle bytes are LCIS_meta
     addr_start = addr_start - sizeof(LCIS_meta_t);
     memcpy(&(cq_entry->imm_data), addr_start, sizeof(LCIS_meta_t));
     // Front bytes are actual data
-    memcpy(cb_args->buf, src_buf, tag_info->length - sizeof(LCIS_meta_t) - sizeof(int));
+    memcpy(cb_args->buf, src_buf, cq_entry->length);
   } else {
     // When only rank and LCIS_meta are sent (used by putImm callback to signal remote completion)
     cq_entry->op = LCII_OP_RDMA_WRITE;
@@ -108,7 +133,40 @@ static void recv_handler(void* request, ucs_status_t status, const ucp_tag_recv_
     // Last bytes are source rank
     memcpy(&(cq_entry->rank), src_buf + sizeof(LCIS_meta_t), sizeof(int));
     
+  }
 
+  // Used for debugging
+  int msg_type = (cq_entry->imm_data) & 0b01111;
+  switch (msg_type) {
+    case 1: {
+      
+      break;
+    }
+    case 2: {
+
+      break;
+    }
+    case 4: {
+
+      break;
+    }
+    case 5:
+
+      break;
+    case 7: {
+
+      break;
+    }
+    case 8: {
+
+      break;
+    }
+    case 6: {
+
+      break;
+    }
+    default:
+      LCM_Assert(false, "Unknown proto!\n");
   }
 
   // Add entry to CQ
@@ -168,7 +226,7 @@ static void put_handler(void* request, ucs_status_t status, void* args) {
                         UCP_OP_ATTR_FIELD_USER_DATA;
   params.cb.send = send_handler;
   params.user_data = (void*) am_cb_args;
-  put_request = ucp_tag_send_nbx(ep->peers[cq_entry->rank], cb_args->packed_buf, sizeof(LCIS_meta_t) + sizeof(int), COMMON_TAG, &params);
+  put_request = ucp_tag_send_nbx(ep->peers[cq_entry->rank], cb_args->packed_buf, sizeof(LCIS_meta_t) + sizeof(int) + 1, COMMON_TAG, &params);
   //put_request = ucp_am_send_nbx(ep->peers[cq_entry->rank], CQ_AM_ID, cb_args->packed_buf, sizeof(LCIS_meta_t) + sizeof(int), NULL, 0, &params);
   LCM_Assert(!UCS_PTR_IS_ERR(put_request), "Error in sending LCIS_meta during rma!");
   // Use callback in case send is completed immediately
@@ -331,7 +389,8 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp, void* buf
   cq_entry->op = LCII_OP_RECV;
   cq_entry->ctx = ctx;
   // Allocate packed buffer to receive (data | LCIS_meta | LCI_RANK)
-  char* packed_buf = malloc(size + sizeof(LCIS_meta_t) + sizeof(int));
+  char* packed_buf = malloc(size + sizeof(LCIS_meta_t) + sizeof(int) + 1);
+  memset(packed_buf, 0, size + sizeof(LCIS_meta_t) + sizeof(int) + 1);
 
   // Set argument for recv callback
   LCISI_cb_args* cb_args = malloc(sizeof(LCISI_cb_args));
@@ -363,7 +422,7 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp, void* buf
   // Use callback in case operation is completed immediately
   if (request == UCS_OK) {
     ucs_status_t unused;
-    recv_handler(NULL, unused, recv_param.recv_info.tag_info, cb_args);
+    recv_handler(NULL, unused, NULL, cb_args);
   }
   free(recv_param.recv_info.tag_info);
   return LCI_OK;
@@ -386,12 +445,13 @@ static inline LCI_error_t LCISD_post_sends(LCIS_endpoint_t endpoint_pp,
   cq_entry->rank = rank;
   cq_entry->ctx = NULL;
 
-  // Pack LCIS_meta and data to send together (data | LCIS_meta | LCI_RANK)
-  char* packed_buf = malloc(size + sizeof(LCIS_meta_t) + sizeof(int));
+  // Pack LCIS_meta and data to send together (data | LCIS_meta | LCI_RANK | terminating char)
+  char* packed_buf = malloc(size + sizeof(LCIS_meta_t) + sizeof(int) + 1);
   int tmpRank = LCI_RANK;
   memcpy(packed_buf, buf, size);
   memcpy(packed_buf + size, &meta, sizeof(LCIS_meta_t));
   memcpy(packed_buf + size + sizeof(LCIS_meta_t), &tmpRank, sizeof(int));
+  memset(packed_buf + size + sizeof(LCIS_meta_t) + sizeof(int), '-', 1);
 
   // Set argument for send callback
   LCISI_cb_args* cb_args = malloc(sizeof(LCISI_cb_args));
@@ -409,7 +469,7 @@ static inline LCI_error_t LCISD_post_sends(LCIS_endpoint_t endpoint_pp,
   send_param.memory_type = UCS_MEMORY_TYPE_HOST;
 
   // Send message, check for errors
-  request = ucp_tag_send_nbx(endpoint_p->peers[rank], packed_buf, size + sizeof(LCIS_meta_t) + sizeof(int), COMMON_TAG, &send_param);
+  request = ucp_tag_send_nbx(endpoint_p->peers[rank], packed_buf, size + sizeof(LCIS_meta_t) + sizeof(int) + 1, COMMON_TAG, &send_param);
   if (UCS_PTR_IS_ERR(request)) {
     LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in posting sends!");
     return LCI_ERR_FATAL;
@@ -439,12 +499,14 @@ static inline LCI_error_t LCISD_post_send(LCIS_endpoint_t endpoint_pp, int rank,
   cq_entry->rank = rank;
   cq_entry->ctx = ctx;
 
-  // Pack LCIS_meta and data to send together (data | LCIS_meta | LCI_RANK)
-  char* packed_buf = malloc(size + sizeof(LCIS_meta_t) + sizeof(int));
+  // Pack LCIS_meta and data to send together (data | LCIS_meta | LCI_RANK | terminating char)
+  char* packed_buf = malloc(size + sizeof(LCIS_meta_t) + sizeof(int) + 1);
   int tmpRank = LCI_RANK;
   memcpy(packed_buf, buf, size);
   memcpy(packed_buf + size, &meta, sizeof(LCIS_meta_t));
   memcpy(packed_buf + size + sizeof(LCIS_meta_t), &tmpRank, sizeof(int));
+  memset(packed_buf + size + sizeof(LCIS_meta_t) + sizeof(int), '-', 1);
+
 
   // Set argument for send callback
   LCISI_cb_args* cb_args = malloc(sizeof(LCISI_cb_args));
@@ -464,7 +526,7 @@ static inline LCI_error_t LCISD_post_send(LCIS_endpoint_t endpoint_pp, int rank,
   send_param.memory_type = UCS_MEMORY_TYPE_HOST;
   
   // Send message, check for errors
-  request = ucp_tag_send_nbx(endpoint_p->peers[rank], packed_buf, size + sizeof(LCIS_meta_t) + sizeof(int), COMMON_TAG, &send_param);
+  request = ucp_tag_send_nbx(endpoint_p->peers[rank], packed_buf, size + sizeof(LCIS_meta_t) + sizeof(int) + 1, COMMON_TAG, &send_param);
   if (UCS_PTR_IS_ERR(request)) {
     LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in posting send!");
     return LCI_ERR_FATAL;
@@ -622,10 +684,12 @@ static inline LCI_error_t LCISD_post_putImms(LCIS_endpoint_t endpoint_pp,
   // Set argument for send callback
   LCISI_cb_args* cb_args = malloc(sizeof(LCISI_cb_args));
   // Stores LCIS_meta and source rank to send to remote completion queue
-  char* packed_buf = malloc(sizeof(LCIS_meta_t) + sizeof(int));
+  char* packed_buf = malloc(sizeof(LCIS_meta_t) + sizeof(int) + 1);
   int tmpRank = LCI_RANK;
   memcpy(packed_buf, &meta, sizeof(LCIS_meta_t));
   memcpy(packed_buf + sizeof(LCIS_meta_t), &tmpRank, sizeof(int));
+  memset(packed_buf + sizeof(LCIS_meta_t) + sizeof(int), '-', 1);
+
   cb_args->entry = cq_entry;
   cb_args->buf = NULL;
   cb_args->packed_buf = packed_buf;
@@ -685,10 +749,12 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
   // Set argument for send callback
   LCISI_cb_args* cb_args = malloc(sizeof(LCISI_cb_args));
   // Stores LCIS_meta and source rank to send to remote completion queue
-  char* packed_buf = malloc(sizeof(LCIS_meta_t) + sizeof(int));
+  char* packed_buf = malloc(sizeof(LCIS_meta_t) + sizeof(int) + 1);
   int tmpRank = LCI_RANK;
   memcpy(packed_buf, &meta, sizeof(LCIS_meta_t));
   memcpy(packed_buf + sizeof(LCIS_meta_t), &tmpRank, sizeof(int));
+  memset(packed_buf + sizeof(LCIS_meta_t) + sizeof(int), '-', 1);
+
   cb_args->entry = cq_entry;
   cb_args->buf = endpoint_p->peers[rank];
   cb_args->packed_buf = packed_buf;
