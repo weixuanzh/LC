@@ -47,7 +47,7 @@ struct Config {
   LCI_comp_type_t send_comp_type = LCI_COMPLETION_SYNC;
   LCI_comp_type_t recv_comp_type = LCI_COMPLETION_SYNC;
   LCI_handler_t comp_handler = NULL;
-  int nthreads = 1;
+  int nthreads = 2;
   bool thread_pin = false;
   size_t min_msg_size = 8;
   size_t max_msg_size = LCI_MEDIUM_SIZE;
