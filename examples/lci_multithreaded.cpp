@@ -1,4 +1,4 @@
-#include "/home/weixuan/library/lci/include/lci.h"
+#include "../src/api/lci.h"
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
