@@ -372,7 +372,6 @@ static inline int LCISD_poll_cq(LCIS_endpoint_t endpoint_pp,
   return num_entries;
 }
 
-// TODO: return different LCI_error according to the status of ucp operation
 static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp, void* buf,
                                    uint32_t size, LCIS_mr_t mr, void* ctx)
 {
@@ -417,8 +416,6 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp, void* buf
     return LCI_ERR_FATAL;
   }
 
-  // Seems like not working
-  // recv_info.tag_info is not updated correctly
   // Use callback in case operation is completed immediately
   if (request == UCS_OK) {
     ucs_status_t unused;
@@ -429,7 +426,6 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp, void* buf
 
 }
 
-// TODO: figure out how to handle messages of differet sizes
 static inline LCI_error_t LCISD_post_sends(LCIS_endpoint_t endpoint_pp,
                                            int rank, void* buf, size_t size,
                                            LCIS_meta_t meta)
