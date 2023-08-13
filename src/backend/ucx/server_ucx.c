@@ -111,6 +111,44 @@ void decode_ucp_address(void* encoded_addrs, size_t encoded_length, void* decode
     }
 }
 
+// Publish an encoded address
+// Splits into segment if address length exceeds PMI string limit
+// Keys are in the format of "LCI_ENC_ep_rank_segment"
+void publish_address(char* encoded_addrs, int endpoint_id, size_t* num_segments) {
+    size_t length = strlen(encoded_addrs);
+    *num_segments = length / LCM_PMI_STRING_LIMIT;
+    if (length % LCM_PMI_STRING_LIMIT != 0) {
+        (*num_segments)++;
+    }
+    for (int i = 0; i < *num_segments; i++) {
+        char seg[LCM_PMI_STRING_LIMIT + 1];
+        char seg_key[LCM_PMI_STRING_LIMIT + 1];
+        memset(seg, 0, LCM_PMI_STRING_LIMIT + 1);
+        memset(seg_key, 0, LCM_PMI_STRING_LIMIT + 1);
+        if (i == *num_segments - 1) {
+            memcpy(seg, encoded_addrs + i * LCM_PMI_STRING_LIMIT, length - i * LCM_PMI_STRING_LIMIT);
+        } else {
+            memcpy(seg, encoded_addrs + i * LCM_PMI_STRING_LIMIT, LCM_PMI_STRING_LIMIT);
+        }
+        sprintf(seg_key, "LCI_ENC_%d_%d_%d", endpoint_id, LCI_RANK, i);
+        lcm_pm_publish(seg_key, seg);
+    }
+}
+
+// Retrieves segmented encoded address into one long encoded address
+// combined_addrs should have sufficient size
+void get_address(size_t num_segments, int endpoint_id, int rank, char* combined_addrs) {
+    for (int i = 0; i < num_segments; i++) {
+        char seg[LCM_PMI_STRING_LIMIT + 1];
+        char seg_key[LCM_PMI_STRING_LIMIT + 1];
+        memset(seg, 0, LCM_PMI_STRING_LIMIT + 1);
+        memset(seg_key, 0, LCM_PMI_STRING_LIMIT + 1);
+        sprintf(seg_key, "LCI_ENC_%d_%d_%d", endpoint_id, rank, i);
+        lcm_pm_getname(rank, seg_key, seg);
+        memcpy(combined_addrs + i * LCM_PMI_STRING_LIMIT, seg, LCM_PMI_STRING_LIMIT);
+    }
+}
+
 void LCISD_server_init(LCI_device_t device, LCIS_server_t* s)
 {
     LCISI_server_t* server = LCIU_malloc(sizeof(LCISI_server_t));
@@ -146,7 +184,7 @@ void LCISD_server_fina(LCIS_server_t s)
 
 void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
                          bool single_threaded)
-{
+{   
     int endpoint_id = g_endpoint_num++;
     LCISI_endpoint_t* endpoint_p = LCIU_malloc(sizeof(LCISI_endpoint_t));
     *endpoint_pp = (LCIS_endpoint_t)endpoint_p;
@@ -202,31 +240,45 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     char encoded_key[LCM_PMI_STRING_LIMIT + 1];
     char nulls_key[LCM_PMI_STRING_LIMIT + 1];
     char size_key[LCM_PMI_STRING_LIMIT + 1];
+    char seg_key[LCM_PMI_STRING_LIMIT + 1];
     memset(encoded_key, 0, LCM_PMI_STRING_LIMIT + 1);
     memset(nulls_key, 0, LCM_PMI_STRING_LIMIT + 1);
     memset(size_key, 0, LCM_PMI_STRING_LIMIT + 1);
+    memset(seg_key, 0, LCM_PMI_STRING_LIMIT + 1);
 
     // Buffers to store published contents
-    char encoded_value[LCM_PMI_STRING_LIMIT + 1];
+    char encoded_value[1024];
     char nulls_value[LCM_PMI_STRING_LIMIT + 1];
     char size_value[LCM_PMI_STRING_LIMIT + 1];
-    memset(encoded_value, 0, LCM_PMI_STRING_LIMIT + 1);
+    char seg_value[LCM_PMI_STRING_LIMIT + 1];
+    memset(encoded_value, 0, 1024);
     memset(nulls_value, 0, LCM_PMI_STRING_LIMIT + 1);
     memset(size_value, 0, LCM_PMI_STRING_LIMIT + 1);
+    memset(seg_value, 0, LCM_PMI_STRING_LIMIT + 1);
 
     // Set key
     sprintf(encoded_key, "LCI_ENC_%d_%d", endpoint_id, LCI_RANK);
     sprintf(nulls_key, "LCI_NUL_%d_%d", endpoint_id, LCI_RANK);
     sprintf(size_key, "LCI_SIZE_%d_%d", endpoint_id, LCI_RANK);
+    sprintf(seg_key, "LCI_SEG_%d_%d", endpoint_id, LCI_RANK);
+
 
     // Encode the address
     encode_ucp_address1(my_addrs, addrs_length, encoded_value, nulls_value);
     memcpy(size_value, &addrs_length, sizeof(size_t));
 
-    // Publish values
-    lcm_pm_publish(encoded_key, encoded_value);
+    // Publish address, get number of segments
+    size_t num_segments;
+    publish_address(encoded_value, endpoint_id, &num_segments);
+    //lcm_pm_publish(encoded_key, encoded_value);
     lcm_pm_publish(nulls_key, nulls_value);
+
+    // Publish original addrs length and num of segments
+    memcpy(size_value, &addrs_length, sizeof(size_t));
+    //memcpy(size_value + sizeof(size_t), &num_segments, sizeof(size_t));
     lcm_pm_publish(size_key, size_value);
+    memcpy(seg_value, &num_segments, sizeof(size_t));
+    lcm_pm_publish(seg_key, seg_value);
     lcm_pm_barrier();
 
     // Receive peer address
@@ -248,25 +300,34 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
             memset(encoded_key, 0, LCM_PMI_STRING_LIMIT + 1);
             memset(nulls_key, 0, LCM_PMI_STRING_LIMIT + 1);
             memset(size_key, 0, LCM_PMI_STRING_LIMIT + 1);
+            memset(seg_key, 0, LCM_PMI_STRING_LIMIT + 1);
 
             // Reset values
-            memset(encoded_value, 0, LCM_PMI_STRING_LIMIT + 1);
+            memset(encoded_value, 0, 1024);
             memset(nulls_value, 0, LCM_PMI_STRING_LIMIT + 1);
             memset(size_value, 0, LCM_PMI_STRING_LIMIT + 1);
+            memset(seg_value, 0, LCM_PMI_STRING_LIMIT + 1);
 
             // Set correct keys
-            sprintf(encoded_key, "LCI_ENC_%d_%d", endpoint_id, i);
+            //sprintf(encoded_key, "LCI_ENC_%d_%d", endpoint_id, i);
             sprintf(nulls_key, "LCI_NUL_%d_%d", endpoint_id, i);
             sprintf(size_key, "LCI_SIZE_%d_%d", endpoint_id, i);
+            sprintf(seg_key, "LCI_SEG_%d_%d", endpoint_id, i);
+
 
             // Get values
-            lcm_pm_getname(i, encoded_key, encoded_value);
+            //lcm_pm_getname(i, encoded_key, encoded_value);
             lcm_pm_getname(i, nulls_key, nulls_value);
             lcm_pm_getname(i, size_key, size_value);
+            lcm_pm_getname(i, seg_key, seg_value);
+
+            // Combine segmented address
+            //memcpy(&num_segments, (char*)size_value + sizeof(size_t), sizeof(size_t));
+            get_address(*((size_t*)seg_value), endpoint_id, i, encoded_value);
 
             // Initialize buffer, Decode address
-            char decoded_value[LCM_PMI_STRING_LIMIT + 1];
-            memset(decoded_value, 0, LCM_PMI_STRING_LIMIT + 1);
+            char decoded_value[1024];
+            memset(decoded_value, 0, 1024);
             decode_ucp_address1(encoded_value, *((int*)size_value), nulls_value, decoded_value);
             
             // Set peer address
