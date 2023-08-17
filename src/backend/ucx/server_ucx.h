@@ -135,40 +135,6 @@ static void recv_handler(void* request, ucs_status_t status, const ucp_tag_recv_
     
   }
 
-  // Used for debugging
-  int msg_type = (cq_entry->imm_data) & 0b01111;
-  switch (msg_type) {
-    case 1: {
-      
-      break;
-    }
-    case 2: {
-
-      break;
-    }
-    case 4: {
-
-      break;
-    }
-    case 5:
-
-      break;
-    case 7: {
-
-      break;
-    }
-    case 8: {
-
-      break;
-    }
-    case 6: {
-
-      break;
-    }
-    default:
-      LCM_Assert(false, "Unknown proto!\n");
-  }
-
   // Add entry to CQ
   ucs_status_t unused;
   push_cq(cq_entry);
@@ -402,9 +368,10 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp, void* buf
   recv_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
                             UCP_OP_ATTR_FIELD_MEMORY_TYPE |
                             UCP_OP_ATTR_FIELD_USER_DATA |
-                            UCP_OP_ATTR_FIELD_RECV_INFO;
+                            UCP_OP_ATTR_FIELD_RECV_INFO|
+                            UCP_OP_ATTR_FIELD_FLAGS;
   recv_param.cb.recv = recv_handler;
-  //recv_param.memh = ((memh_wrapper*) mr.mr_p)->memh;
+  recv_param.flags = UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
   recv_param.memory_type = UCS_MEMORY_TYPE_HOST;
   recv_param.user_data = cb_args;
   recv_param.recv_info.tag_info = malloc(sizeof(ucp_tag_recv_info_t));

@@ -54,11 +54,6 @@ LCI_device_t device;
 LCI_endpoint_t ep;
 LCI_comp_t cq;
 
-// Synchronize start time of threads
-// mutex mtx;
-// bool ready = false;
-// condition_variable cv;
-
 // Version 2 synchronizer
 alignas(64) atomic<bool> ready(false);
 
@@ -77,8 +72,6 @@ void threadFcn(unsigned seed) {
 
     //printf("%d\n", (-1 % LCI_NUM_PROCESSES));
     // Block the thread until all threads are created
-    // unique_lock<mutex> lk(mtx);
-    // cv.wait(lk, []{return ready;});
     while (ready.load() == false) {
 
     }
@@ -314,7 +307,6 @@ int main(int argc, char** args) {
     // Signal all threads to start, record time
     uint64_t sendStart = chrono::duration_cast<chrono::microseconds>(chrono::high_resolution_clock::now().time_since_epoch()).count();
     ready.store(true);
-    //cv.notify_all();
     for (int i = 0; i < nThreads; i++) {
         ts[i].join();
     }
