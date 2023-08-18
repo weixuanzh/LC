@@ -5,6 +5,8 @@ libdir=${exec_prefix}/lib
 
 Name: liblci
 Description: The LCI library
-Version: 0.2.0
+Version: 0.2.1
+Requires.private: 
 Cflags: -I${includedir}
 Libs: -L${libdir} -llci
+Libs.private: 
