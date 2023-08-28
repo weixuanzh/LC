@@ -3,42 +3,6 @@
 
 static int g_endpoint_num = 0;
 
-// Assuming that my_addrs is no longer than 256 bytes
-// Takes my_addrs and addrs_length as input
-// Outputs encoded_addrs and null_locations
-// encoded_addrs is simply my_addrs with null removed
-// null_locations indicates position of removed null and is used for reconstruction
-void encode_ucp_address1(char* my_addrs, int addrs_length, char* encoded_addrs, char* null_locations) {
-    char* start = my_addrs;
-    int count = 0;
-    int loc_idx = 0;
-    int encoded_idx = 0;
-    for (int i = 0; i < addrs_length; i++) {
-        if (my_addrs[i] == '\0') {
-            null_locations[loc_idx] = (uint8_t) i;
-            loc_idx++;
-        } else {
-            encoded_addrs[encoded_idx] = my_addrs[i];
-            encoded_idx++;
-        }
-    }
-}
-
-// original_length is the length of address before encoding
-void decode_ucp_address1(char* encoded_addrs, int original_length, uint8_t* null_locations, char* decoded_addrs) {
-    int null_idx = 0;
-    int encoded_idx = 0;
-    for (int i = 0; i < original_length; i++) {
-        if (i == null_locations[null_idx]) {
-            decoded_addrs[i] = '\0';
-            null_idx++;
-        } else {
-            decoded_addrs[i] = encoded_addrs[encoded_idx];
-            encoded_idx++;
-        }
-    }
-}
-
 // Encodes a ucp address into its hex representation as a string
 // my_addrs should have null bytes 
 // encoded_value buffer should have enough size to store encoded content
@@ -54,8 +18,8 @@ void encode_ucp_address(char* my_addrs, int addrs_length, char* encoded_value) {
 // no need to provide length as encoded_addrs is one single string
 void decode_ucp_address(char* encoded_addrs, char* decoded_addrs) {
     int segs = (strlen(encoded_addrs) + 16 - 1) / 16;
-    char* tmp_buf[17];
-    tmp_buf[16] = NULL;
+    char tmp_buf[17];
+    tmp_buf[16] = 0;
     for (int i = 0; i < segs; i++) {
         memcpy(tmp_buf, encoded_addrs + i * 16, 16);
         *((uint64_t*)(decoded_addrs + i * sizeof(uint64_t))) = strtoul(tmp_buf, NULL, 16);
@@ -83,7 +47,6 @@ void publish_address(char* encoded_addrs, int endpoint_id, size_t* num_segments)
         sprintf(seg_key, "LCI_ENC_%d_%d_%d", endpoint_id, LCI_RANK, i);
         lcm_pm_publish(seg_key, seg);
     }
-
 }
 
 // Retrieves segmented encoded address into one long encoded address
@@ -122,13 +85,14 @@ void LCISD_server_init(LCI_device_t device, LCIS_server_t* s)
     
 }
 
+// Currently empty, otherwise uncompleted request (by preposting receive) will result in errors
 void LCISD_server_fina(LCIS_server_t s)
 {
-  LCISI_server_t* server = (LCISI_server_t*)s;
-  LCM_Assert(server->endpoint_count == 0, "Endpoint count is not zero (%d)\n",
-             server->endpoint_count);
-  ucp_cleanup(server->context);
-  free(s);
+//   LCISI_server_t* server = (LCISI_server_t*)s;
+//   LCM_Assert(server->endpoint_count == 0, "Endpoint count is not zero (%d)\n",
+//              server->endpoint_count);
+//   ucp_cleanup(server->context);
+//   free(s);
 }
 
 void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
@@ -156,24 +120,11 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     endpoint_p->worker = worker;
 
     // Create lock
-    #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
-    LCIU_spinlock_init(&(endpoint_p->lock))
-    #endif
+    LCIU_spinlock_init(&(endpoint_p->lock));
 
     // Create completion queue
     LCM_dq_init(&endpoint_p->completed_ops, 8192);
     
-    // Set handler for active message (for putImm and putsImm)
-    // Currently not useful
-    ucp_am_handler_param_t am_params;
-    am_params.field_mask = UCP_AM_HANDLER_PARAM_FIELD_CB |
-                           UCP_AM_HANDLER_PARAM_FIELD_ID |
-                           UCP_AM_HANDLER_PARAM_FIELD_ARG;
-    am_params.id = CQ_AM_ID;
-    am_params.arg = endpoint_pp;
-    ucs_status_t tmp;
-    tmp = ucp_worker_set_am_recv_handler(worker, &am_params);
-
     // Exchange endpoint address
     endpoint_p->peers = LCIU_malloc(sizeof(ucp_ep_h) * LCI_NUM_PROCESSES);
     ucp_address_t* my_addrs;
@@ -197,7 +148,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     sprintf(seg_key, "LCI_SEG_%d_%d", endpoint_id, LCI_RANK);
 
     // Encode the address
-    encode_ucp_address(my_addrs, addrs_length, encoded_value);
+    encode_ucp_address((char*)my_addrs, addrs_length, encoded_value);
 
     // Publish address, get number of segments
     size_t num_segments;
@@ -210,6 +161,10 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     lcm_pm_barrier();
 
     // Receive peer address
+    // Buffer to store decoded address
+    char decoded_value[1024];
+    memset(decoded_value, 0, 1024);
+
     for (int i = 0; i < LCI_NUM_PROCESSES; i++) {
         size_t size;
         // Create ucp endpoint to connect workers
@@ -240,8 +195,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
             // Combine segmented address
             get_address(*((size_t*)seg_value), endpoint_id, i, encoded_value);
 
-            // Initialize buffer, Decode address
-            char* decoded_value = malloc(1024);
+            // Reset buffer, decode address
             memset(decoded_value, 0, 1024);
             decode_ucp_address(encoded_value, decoded_value);
 
@@ -259,23 +213,24 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     lcm_pm_barrier();
 }
 
+// Currently empty, otherwise uncompleted request (by preposting receive) will result in errors
 void LCISD_endpoint_fina(LCIS_endpoint_t endpoint_pp)
 {
-  lcm_pm_barrier();
-  LCISI_endpoint_t* endpoint_p = (LCISI_endpoint_t*)endpoint_pp;
-  int my_idx = --endpoint_p->server->endpoint_count;
-  LCM_Assert(endpoint_p->server->endpoints[my_idx] == endpoint_p,
-             "This is not me!\n");
-  endpoint_p->server->endpoints[my_idx] = NULL;
-  for (int i = 0; i < LCI_NUM_PROCESSES; i++) {
-    ucs_status_ptr_t status;
-    ucp_request_param_t params;
-    params.flags = UCP_EP_CLOSE_FLAG_FORCE;
-    status = ucp_ep_close_nbx((endpoint_p->peers)[i], &params);
-  }
+//   lcm_pm_barrier();
+//   LCISI_endpoint_t* endpoint_p = (LCISI_endpoint_t*)endpoint_pp;
+//   int my_idx = --endpoint_p->server->endpoint_count;
+//   LCM_Assert(endpoint_p->server->endpoints[my_idx] == endpoint_p,
+//              "This is not me!\n");
+//   endpoint_p->server->endpoints[my_idx] = NULL;
+//   for (int i = 0; i < LCI_NUM_PROCESSES; i++) {
+//     ucs_status_ptr_t status;
+//     ucp_request_param_t params;
+//     params.flags = UCP_EP_CLOSE_FLAG_FORCE;
+//     status = ucp_ep_close_nbx((endpoint_p->peers)[i], &params);
+//   }
 
-  // Should other ucp ep owned by other workers be destoryed?
-  ucp_worker_destroy(endpoint_p->worker);
-  LCM_dq_finalize(&(endpoint_p->completed_ops));
-  free(endpoint_pp);
+//   // Should other ucp ep owned by other workers be destoryed?
+//   ucp_worker_destroy(endpoint_p->worker);
+//   LCM_dq_finalize(&(endpoint_p->completed_ops));
+//   free(endpoint_pp);
 }
