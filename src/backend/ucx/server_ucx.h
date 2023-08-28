@@ -37,16 +37,13 @@ typedef struct __attribute__((aligned(LCI_CACHE_LINE))) LCISI_server_t {
   ucp_context_h context;
 } LCISI_server_t;
 
-
 typedef struct __attribute__((aligned(LCI_CACHE_LINE))) LCISI_endpoint_t {
   LCISI_server_t* server;
   ucp_worker_h worker;
   ucp_ep_h* peers;
   size_t* addrs_length;
   LCM_dequeue_t completed_ops;
-  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
   LCIU_spinlock_t lock;
-  #endif
 } LCISI_endpoint_t;
 
 // pack meta (4 bytes) and rank (4 bytes) into ucp_tag_t (8 bytes)
@@ -68,14 +65,11 @@ static void unpack_tag(ucp_tag_t tag, LCIS_meta_t* meta_ptr, int* int_ptr) {
 static void push_cq(void* entry) {
   LCISI_cq_entry* cq_entry = (LCISI_cq_entry*) entry;
   LCISI_endpoint_t* ep = (LCISI_endpoint_t*) cq_entry->ep;
-  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
+
   LCIU_acquire_spinlock(&(ep->lock));
-  #endif
   int status = LCM_dq_push_top(&(ep->completed_ops), entry);
   LCM_Assert(status != LCM_RETRY, "Too many entries in CQ!");
-  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
   LCIU_release_spinlock(&(ep->lock));
-  #endif
 }
 
 // Struct to use when passing arguments to recv handler
@@ -89,18 +83,6 @@ typedef struct __attribute__((aligned(LCI_CACHE_LINE))) LCISI_cb_args {
   // Buffer to store packed message
   void* packed_buf;
 } LCISI_cb_args;
-
-// Takes address to the start of an allocated recv buffer and allocated size
-// Outputs the length of the buffer which contains meaningful data (not all 0 bytes)
-static size_t find_end(char* recv_buf, size_t buf_size) {
-  for (int i = buf_size - 1; i >= 0; i--) {
-    if (recv_buf[i] == '-') {
-      return i;
-    }
-  }
-  LCM_Assert(false, "Error in obtaining buffer end!");
-  return 0;
-}
 
 // Called when ucp receives a message
 // Unpack received data, update completion queue, free allocated buffers
@@ -132,8 +114,8 @@ static void recv_handler(void* request, ucs_status_t status, const ucp_tag_recv_
   push_cq(cq_entry);
 
   // Free resources
-  // free(cb_args->packed_buf);
-  // free(cb_args);
+  free(cb_args->packed_buf);
+  free(cb_args);
   if (request != NULL) {
     ucp_request_free(request);
   }
@@ -166,7 +148,6 @@ static void put_handler(void* request, ucs_status_t status, void* args) {
   LCISI_cq_entry* cq_entry = (LCISI_cq_entry*) cb_args->entry;
   LCISI_endpoint_t* ep = (LCISI_endpoint_t*) cq_entry->ep;
 
-
   // Add entry to completion queue
   push_cq(cq_entry);
 
@@ -192,28 +173,6 @@ static void put_handler(void* request, ucs_status_t status, void* args) {
     send_handler(put_request, unused, am_cb_args);
   }
   free(cb_args);
-}
-
-// Specify this when creating ucp workers
-// Callback function to update the CQ once an active message has arrived
-// The only source of AM is the remote CQ signal after put completion
-static ucs_status_t am_rma_handler(void* arg, const void* header, size_t header_length, void* data, size_t length, const ucp_am_recv_param_t* param) {
-  char* tmp = (char*) header;
-  LCISI_endpoint_t* ep = (LCISI_endpoint_t*) arg;
-  LCISI_cq_entry* cq_entry = malloc(sizeof(LCISI_cq_entry));
-  cq_entry->ep = ep;
-  cq_entry->op = LCII_OP_RDMA_WRITE;
-  memcpy(&(cq_entry->rank), tmp, sizeof(int));
-  memcpy(&(cq_entry->imm_data), tmp + sizeof(int), sizeof(LCIS_meta_t));
-  cq_entry->length = length;
-  cq_entry->ctx = NULL;
-  push_cq(cq_entry);
-  return UCS_OK;
-}
-
-static ucs_status_t am_failure_handler(void* arg, const void* header, size_t header_length, void* data, size_t length, const ucp_am_recv_param_t* param) {
-  LCM_Assert(false, "Received unexpected active message!");
-  return UCS_OK;
 }
 
 static void failure_handler(void *request, ucp_ep_h ep, ucs_status_t status) {
@@ -268,48 +227,23 @@ static inline LCIS_rkey_t LCISD_rma_rkey(LCIS_mr_t mr)
   size_t packed_size;
   ucs_status_t status;
   memh_wrapper* wrapper = (memh_wrapper*) mr.mr_p;
-  // ucp_memh_pack_params_t params;
-  // params.field_mask = UCP_MEMH_PACK_FLAG_EXPORT;
   status = ucp_rkey_pack(wrapper->context, wrapper->memh, &packed_addr, &packed_size);
   LCM_Assert(!UCS_PTR_IS_ERR(status), "Error in packing rkey!");
-  //LCM_Assert(packed_size <= sizeof(LCIS_rkey_t), "Size exceeds limit!");
-  LCIS_rkey_t* res = malloc(sizeof(__uint128_t));
-  memset(res, 0, sizeof(__uint128_t));
-  memcpy(res, packed_addr, packed_size);
-  return *res;
+  LCM_Assert(packed_size <= sizeof(LCIS_rkey_t), "Size exceeds limit!");
+  LCIS_rkey_t res;
+  memset(&res, 0, sizeof(LCIS_rkey_t));
+  memcpy(&res, packed_addr, packed_size);
+  return res;
 }
 
-// Not necessary if serve send/recv are completed in callback functions
+// 
 static inline int LCISD_poll_cq(LCIS_endpoint_t endpoint_pp,
                                 LCIS_cq_entry_t* entry)
 {
   LCISI_endpoint_t* endpoint_p = (LCISI_endpoint_t*)endpoint_pp;
-
-  // Call ucp_flush to complete RMA operations
-  // Test to run without flush
-  // ucp_request_param_t flush_param;
-  // void* flush_request;
-  // flush_param.op_attr_mask = 0;
-  // flush_request = ucp_worker_flush_nbx(endpoint_p->worker, &flush_param);
-  // if (flush_request == NULL) {
-      
-  // } else {
-  //   LCM_Assert(!UCS_PTR_IS_ERR(flush_request), "error in flushing worker!");
-  //   ucs_status_t flush_status;
-  //   do {
-  //     ucp_worker_progress(endpoint_p->worker);
-  //     flush_status = ucp_request_check_status(flush_request);
-  //   } while (flush_status == UCS_INPROGRESS);
-  //     ucp_request_free(flush_request);
-  // }
-
   ucp_worker_progress(endpoint_p->worker);
-
   int num_entries = 0;
 
-  // Use while loop
-  // Keep below maximum number
-  // Lock when poping bottom
   #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
   LCIU_acquire_spinlock(&(endpoint_p->lock));
   #endif
@@ -326,6 +260,7 @@ static inline int LCISD_poll_cq(LCIS_endpoint_t endpoint_pp,
   #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
   LCIU_release_spinlock(&(endpoint_p->lock));
   #endif
+
   return num_entries;
 }
 
@@ -356,10 +291,12 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp, void* buf
   recv_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
                             UCP_OP_ATTR_FIELD_MEMORY_TYPE |
                             UCP_OP_ATTR_FIELD_USER_DATA |
-                            UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
+                            UCP_OP_ATTR_FLAG_NO_IMM_CMPL |
+                            UCP_OP_ATTR_FIELD_MEMH;
   recv_param.cb.recv = recv_handler;
   recv_param.memory_type = UCS_MEMORY_TYPE_HOST;
   recv_param.user_data = cb_args;
+  recv_param.memh = mr.mr_p;
   
   // Receive message, check for errors
   request = ucp_tag_recv_nbx(endpoint_p->worker, buf, size, COMMON_TAG, 0, &recv_param);
@@ -419,7 +356,6 @@ static inline LCI_error_t LCISD_post_sends(LCIS_endpoint_t endpoint_pp,
   return LCI_OK;
 }
 
-// TODO: figure out what LCIS_mr_t is used for
 static inline LCI_error_t LCISD_post_send(LCIS_endpoint_t endpoint_pp, int rank,
                                           void* buf, size_t size, LCIS_mr_t mr,
                                           LCIS_meta_t meta, void* ctx)
@@ -479,9 +415,9 @@ static inline LCI_error_t LCISD_post_puts(LCIS_endpoint_t endpoint_pp, int rank,
   // Unpack the packed rkey
   ucp_rkey_h rkey_ptr;
   ucs_status_t status;
-  void* tmp_rkey = malloc(sizeof(__uint128_t));
-  memset(tmp_rkey, 0, sizeof(__uint128_t));
-  strcpy(tmp_rkey, &rkey);
+  void* tmp_rkey = malloc(sizeof(LCIS_rkey_t));
+  memset(tmp_rkey, 0, sizeof(LCIS_rkey_t));
+  memcpy(tmp_rkey, &rkey, sizeof(LCIS_rkey_t));
   status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
   LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
@@ -535,9 +471,9 @@ static inline LCI_error_t LCISD_post_put(LCIS_endpoint_t endpoint_pp, int rank,
   // Unpack the packed rkey
   ucp_rkey_h rkey_ptr;
   ucs_status_t status;
-  void* tmp_rkey = malloc(sizeof(__uint128_t));
-  memset(tmp_rkey, 0, sizeof(__uint128_t));
-  strcpy(tmp_rkey, &rkey);
+  void* tmp_rkey = malloc(sizeof(LCIS_rkey_t));
+  memset(tmp_rkey, 0, sizeof(LCIS_rkey_t));
+  memcpy(tmp_rkey, &rkey, sizeof(LCIS_rkey_t));
   status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
   LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
@@ -593,9 +529,9 @@ static inline LCI_error_t LCISD_post_putImms(LCIS_endpoint_t endpoint_pp,
   // Unpack the packed rkey
   ucp_rkey_h rkey_ptr;
   ucs_status_t status;
-  void* tmp_rkey = malloc(sizeof(__uint128_t));
-  memset(tmp_rkey, 0, sizeof(__uint128_t));
-  strcpy(tmp_rkey, &rkey);
+  void* tmp_rkey = malloc(sizeof(LCIS_rkey_t));
+  memset(tmp_rkey, 0, sizeof(LCIS_rkey_t));
+  memcpy(tmp_rkey, &rkey, sizeof(LCIS_rkey_t));
   status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
   LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
@@ -655,9 +591,9 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
   // Unpack the packed rkey
   ucp_rkey_h rkey_ptr;
   ucs_status_t status;
-  void* tmp_rkey = malloc(sizeof(__uint128_t));
-  memset(tmp_rkey, 0, sizeof(__uint128_t));
-  strcpy(tmp_rkey, &rkey);
+  void* tmp_rkey = malloc(sizeof(LCIS_rkey_t));
+  memset(tmp_rkey, 0, sizeof(LCIS_rkey_t));
+  memcpy(tmp_rkey, &rkey, sizeof(LCIS_rkey_t));
   status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
   LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
