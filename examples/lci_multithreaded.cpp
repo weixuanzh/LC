@@ -70,12 +70,10 @@ void progressFcn(int n, LCI_device_t device1) {
 
 void threadFcn(unsigned seed) {
 
-    //printf("%d\n", (-1 % LCI_NUM_PROCESSES));
     // Block the thread until all threads are created
     while (ready.load() == false) {
 
     }
-
     //printf("\nWorker thread starts: rank %d", LCI_RANK);
 
     // Timer to limit rate
@@ -88,11 +86,9 @@ void threadFcn(unsigned seed) {
     int tempMsgSent[LCI_NUM_PROCESSES] = {0};
     int tempMsgRecved[LCI_NUM_PROCESSES] = {0};
 
-
     while (true) {
 
         // Generate a random destination
-
         // Forced exit for debugging
         uint64_t t1 = chrono::duration_cast<chrono::microseconds>(chrono::high_resolution_clock::now().time_since_epoch()).count();
         if ((t1 - lastSend) / 1000 > 5000) {

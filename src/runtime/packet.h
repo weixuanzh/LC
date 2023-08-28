@@ -33,7 +33,7 @@ struct __attribute__((packed)) LCII_packet_rts_t {
 
 struct __attribute__((packed)) LCII_packet_rtr_iovec_info_t {
   #ifdef LCI_USE_SERVER_UCX
-  __uint128_t rkey;
+  LCIS_rkey_t rkey;
   #else
   uint64_t rkey;
   #endif
@@ -49,7 +49,7 @@ struct __attribute__((packed)) LCII_packet_rtr_t {
     // for LCI_LONG
     struct {
       #ifdef LCI_USE_SERVER_UCX
-      __uint128_t rkey;
+      LCIS_rkey_t rkey;
       #else
       uint64_t rkey;
       #endif      
