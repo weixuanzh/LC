@@ -120,7 +120,9 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     endpoint_p->worker = worker;
 
     // Create lock
+    #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
     LCIU_spinlock_init(&(endpoint_p->lock));
+    #endif
 
     // Create completion queue
     LCM_dq_init(&endpoint_p->completed_ops, 8192);

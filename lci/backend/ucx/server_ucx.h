@@ -43,7 +43,9 @@ typedef struct __attribute__((aligned(LCI_CACHE_LINE))) LCISI_endpoint_t {
   ucp_ep_h* peers;
   size_t* addrs_length;
   LCM_dequeue_t completed_ops;
+  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
   LCIU_spinlock_t lock;
+  #endif
 } LCISI_endpoint_t;
 
 // pack meta (4 bytes) and rank (4 bytes) into ucp_tag_t (8 bytes)
@@ -65,11 +67,14 @@ static void unpack_tag(ucp_tag_t tag, LCIS_meta_t* meta_ptr, int* int_ptr) {
 static void push_cq(void* entry) {
   LCISI_cq_entry* cq_entry = (LCISI_cq_entry*) entry;
   LCISI_endpoint_t* ep = (LCISI_endpoint_t*) cq_entry->ep;
-
+  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
   LCIU_acquire_spinlock(&(ep->lock));
+  #endif
   int status = LCM_dq_push_top(&(ep->completed_ops), entry);
   LCI_Assert(status != LCM_RETRY, "Too many entries in CQ!");
+  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
   LCIU_release_spinlock(&(ep->lock));
+  #endif
 }
 
 // Struct to use when passing arguments to recv handler
@@ -296,7 +301,7 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp, void* buf
   recv_param.cb.recv = recv_handler;
   recv_param.memory_type = UCS_MEMORY_TYPE_HOST;
   recv_param.user_data = cb_args;
-  recv_param.memh = mr.mr_p;
+  recv_param.memh = ((memh_wrapper*) mr.mr_p)->memh;
   
   // Receive message, check for errors
   request = ucp_tag_recv_nbx(endpoint_p->worker, buf, size, COMMON_TAG, 0, &recv_param);
@@ -334,7 +339,8 @@ static inline LCI_error_t LCISD_post_sends(LCIS_endpoint_t endpoint_pp,
   ucp_request_param_t send_param;
   send_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
                             UCP_OP_ATTR_FIELD_MEMORY_TYPE |
-                            UCP_OP_ATTR_FIELD_USER_DATA;
+                            UCP_OP_ATTR_FIELD_USER_DATA |
+                            UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
   send_param.cb.send = send_handler;
   send_param.user_data = cb_args;
   send_param.memory_type = UCS_MEMORY_TYPE_HOST;
@@ -345,12 +351,6 @@ static inline LCI_error_t LCISD_post_sends(LCIS_endpoint_t endpoint_pp,
   if (UCS_PTR_IS_ERR(request)) {
     LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in posting sends!");
     return LCI_ERR_FATAL;
-  }
-
-  // Use callback in case operation is completed immediately
-  if (request == UCS_OK) {
-    ucs_status_t unused;
-    send_handler(NULL, unused, cb_args);
   }
 
   return LCI_OK;
@@ -382,7 +382,8 @@ static inline LCI_error_t LCISD_post_send(LCIS_endpoint_t endpoint_pp, int rank,
   send_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
                             UCP_OP_ATTR_FIELD_MEMORY_TYPE |
                             UCP_OP_ATTR_FIELD_USER_DATA |
-                            UCP_OP_ATTR_FIELD_MEMH;
+                            UCP_OP_ATTR_FIELD_MEMH |
+                            UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
   send_param.cb.send = send_handler;
   send_param.user_data = cb_args;
   send_param.memh = ((memh_wrapper*) mr.mr_p)->memh;
@@ -393,12 +394,6 @@ static inline LCI_error_t LCISD_post_send(LCIS_endpoint_t endpoint_pp, int rank,
   if (UCS_PTR_IS_ERR(request)) {
     LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in posting send!");
     return LCI_ERR_FATAL;
-  }
-
-  // Use callback in case operation is completed immediately
-  if (request == UCS_OK) {
-    ucs_status_t unused;
-    send_handler(NULL, unused, cb_args);
   }
   
   return LCI_OK;
@@ -439,7 +434,8 @@ static inline LCI_error_t LCISD_post_puts(LCIS_endpoint_t endpoint_pp, int rank,
   ucp_request_param_t put_param;
   put_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
                             UCP_OP_ATTR_FIELD_MEMORY_TYPE |
-                            UCP_OP_ATTR_FIELD_USER_DATA;
+                            UCP_OP_ATTR_FIELD_USER_DATA |
+                            UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
   // No need to signal remote completion
   put_param.cb.send = send_handler;
   put_param.user_data = cb_args;
@@ -450,12 +446,6 @@ static inline LCI_error_t LCISD_post_puts(LCIS_endpoint_t endpoint_pp, int rank,
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
   LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
-
-  // Use callback in case operation is completed immediately
-  if (request == UCS_OK) {
-    ucs_status_t unused;
-    send_handler(NULL, unused, cb_args);
-  }
 
   return LCI_OK;
 
@@ -495,7 +485,8 @@ static inline LCI_error_t LCISD_post_put(LCIS_endpoint_t endpoint_pp, int rank,
   ucp_request_param_t put_param;
   put_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
                             UCP_OP_ATTR_FIELD_MEMORY_TYPE |
-                            UCP_OP_ATTR_FIELD_USER_DATA;
+                            UCP_OP_ATTR_FIELD_USER_DATA |
+                            UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
   // No need to signal remote completion
   put_param.cb.send = send_handler;
   put_param.user_data = cb_args;
@@ -506,12 +497,6 @@ static inline LCI_error_t LCISD_post_put(LCIS_endpoint_t endpoint_pp, int rank,
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
   LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
-
-  // Use callback in case operation is completed immediately
-  if (request == UCS_OK) {
-    ucs_status_t unused;
-    send_handler(NULL, unused, cb_args);
-  }
 
   return LCI_OK;
 
@@ -557,7 +542,8 @@ static inline LCI_error_t LCISD_post_putImms(LCIS_endpoint_t endpoint_pp,
   ucp_request_param_t put_param;
   put_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
                             UCP_OP_ATTR_FIELD_MEMORY_TYPE |
-                            UCP_OP_ATTR_FIELD_USER_DATA;
+                            UCP_OP_ATTR_FIELD_USER_DATA |
+                            UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
   // Deliever data to remote CQ with active message
   put_param.cb.send = put_handler;
   put_param.user_data = cb_args;
@@ -568,12 +554,6 @@ static inline LCI_error_t LCISD_post_putImms(LCIS_endpoint_t endpoint_pp,
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
   LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
-
-  // Use callback in case operation is completed immediately
-  if (request == UCS_OK) {
-    ucs_status_t unused;
-    put_handler(NULL, unused, cb_args);
-  }
 
   return LCI_OK;
 
@@ -619,7 +599,8 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
   ucp_request_param_t put_param;
   put_param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
                             UCP_OP_ATTR_FIELD_MEMORY_TYPE |
-                            UCP_OP_ATTR_FIELD_USER_DATA;
+                            UCP_OP_ATTR_FIELD_USER_DATA |
+                            UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
   // Deliever data to remote CQ with active message
   put_param.cb.send = put_handler;
   put_param.user_data = cb_args;
@@ -629,13 +610,7 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
-  LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
-
-  // Use callback in case operation is completed immediately
-  if (request == UCS_OK) {
-    ucs_status_t unused;
-    put_handler(NULL, unused, cb_args);
-  }
+  LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA put operation!");
 
   return LCI_OK;
 
