@@ -68,7 +68,7 @@ static void push_cq(void* entry) {
 
   LCIU_acquire_spinlock(&(ep->lock));
   int status = LCM_dq_push_top(&(ep->completed_ops), entry);
-  LCM_Assert(status != LCM_RETRY, "Too many entries in CQ!");
+  LCI_Assert(status != LCM_RETRY, "Too many entries in CQ!");
   LCIU_release_spinlock(&(ep->lock));
 }
 
@@ -94,9 +94,9 @@ static void recv_handler(void* request, ucs_status_t status, const ucp_tag_recv_
   int msg_length = 0;
 
   // Check if user provided buffer size is enough to receive message
-  LCM_Assert(cb_args->size >= tag_info->length, "Message size greater than allocated buffer!");
+  LCI_Assert(cb_args->size >= tag_info->length, "Message size greater than allocated buffer!");
   // Check if received message length makes sense (cannot be too short)
-  LCM_Assert(tag_info->length >= 0, "Message length is too short to be valid!");
+  LCI_Assert(tag_info->length >= 0, "Message length is too short to be valid!");
   cq_entry->length = tag_info->length;
 
   if (cq_entry->length != 0) {
@@ -166,7 +166,7 @@ static void put_handler(void* request, ucs_status_t status, void* args) {
   params.cb.send = send_handler;
   params.user_data = (void*) am_cb_args;
   put_request = ucp_tag_send_nbx(ep->peers[cq_entry->rank], cb_args->packed_buf, 0, *((ucp_tag_t*)(cb_args->packed_buf)), &params);
-  LCM_Assert(!UCS_PTR_IS_ERR(put_request), "Error in sending LCIS_meta during rma!");
+  LCI_Assert(!UCS_PTR_IS_ERR(put_request), "Error in sending LCIS_meta during rma!");
   // Use callback in case send is completed immediately
   if (put_request == UCS_OK) {
     ucs_status_t unused;
@@ -200,7 +200,7 @@ static inline LCIS_mr_t LCISD_rma_reg(LCIS_server_t s, void* buf, size_t size)
   //params.exported_memh_buffer = malloc(sizeof(ucp_mem_h));
   status = ucp_mem_map(server->context, &params, &memh);
   if (status != UCS_OK) {
-    LCM_Assert(false, "Error in server deregistration!");
+    LCI_Assert(false, "Error in server deregistration!");
   }
   mr.address = buf;
   mr.length = size;
@@ -216,7 +216,7 @@ static inline void LCISD_rma_dereg(LCIS_mr_t mr)
   memh_wrapper* wrapper = (memh_wrapper*) mr.mr_p;
   status = ucp_mem_unmap(wrapper->context, wrapper->memh);
   if (status != UCS_OK) {
-    LCM_Assert(false, "Error in server deregistration!");
+    LCI_Assert(false, "Error in server deregistration!");
   }
   free(wrapper);
 }
@@ -228,8 +228,8 @@ static inline LCIS_rkey_t LCISD_rma_rkey(LCIS_mr_t mr)
   ucs_status_t status;
   memh_wrapper* wrapper = (memh_wrapper*) mr.mr_p;
   status = ucp_rkey_pack(wrapper->context, wrapper->memh, &packed_addr, &packed_size);
-  LCM_Assert(!UCS_PTR_IS_ERR(status), "Error in packing rkey!");
-  LCM_Assert(packed_size <= sizeof(LCIS_rkey_t), "Size exceeds limit!");
+  LCI_Assert(!UCS_PTR_IS_ERR(status), "Error in packing rkey!");
+  LCI_Assert(packed_size <= sizeof(LCIS_rkey_t), "Size exceeds limit!");
   LCIS_rkey_t res;
   memset(&res, 0, sizeof(LCIS_rkey_t));
   memcpy(&res, packed_addr, packed_size);
@@ -301,7 +301,7 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp, void* buf
   // Receive message, check for errors
   request = ucp_tag_recv_nbx(endpoint_p->worker, buf, size, COMMON_TAG, 0, &recv_param);
   if (UCS_PTR_IS_ERR(request)) {
-    LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in recving message!");
+    LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in recving message!");
     return LCI_ERR_FATAL;
   }
 
@@ -343,7 +343,7 @@ static inline LCI_error_t LCISD_post_sends(LCIS_endpoint_t endpoint_pp,
   // LCIS_meta_t and source rank are delievered in ucp tag
   request = ucp_tag_send_nbx(endpoint_p->peers[rank], buf, size, create_tag(meta, LCI_RANK), &send_param);
   if (UCS_PTR_IS_ERR(request)) {
-    LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in posting sends!");
+    LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in posting sends!");
     return LCI_ERR_FATAL;
   }
 
@@ -391,7 +391,7 @@ static inline LCI_error_t LCISD_post_send(LCIS_endpoint_t endpoint_pp, int rank,
   // Send message, check for errors
   request = ucp_tag_send_nbx(endpoint_p->peers[rank], buf, size, create_tag(meta, LCI_RANK), &send_param);
   if (UCS_PTR_IS_ERR(request)) {
-    LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in posting send!");
+    LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in posting send!");
     return LCI_ERR_FATAL;
   }
 
@@ -419,7 +419,7 @@ static inline LCI_error_t LCISD_post_puts(LCIS_endpoint_t endpoint_pp, int rank,
   memset(tmp_rkey, 0, sizeof(LCIS_rkey_t));
   memcpy(tmp_rkey, &rkey, sizeof(LCIS_rkey_t));
   status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
-  LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
+  LCI_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
   // Prepare CQ entry associated with this operation
   LCISI_cq_entry* cq_entry = malloc(sizeof(LCISI_cq_entry));
@@ -449,7 +449,7 @@ static inline LCI_error_t LCISD_post_puts(LCIS_endpoint_t endpoint_pp, int rank,
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
-  LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
+  LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
 
   // Use callback in case operation is completed immediately
   if (request == UCS_OK) {
@@ -475,7 +475,7 @@ static inline LCI_error_t LCISD_post_put(LCIS_endpoint_t endpoint_pp, int rank,
   memset(tmp_rkey, 0, sizeof(LCIS_rkey_t));
   memcpy(tmp_rkey, &rkey, sizeof(LCIS_rkey_t));
   status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
-  LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
+  LCI_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
   // Prepare CQ entry associated with this operation
   LCISI_cq_entry* cq_entry = malloc(sizeof(LCISI_cq_entry));
@@ -505,7 +505,7 @@ static inline LCI_error_t LCISD_post_put(LCIS_endpoint_t endpoint_pp, int rank,
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
-  LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
+  LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
 
   // Use callback in case operation is completed immediately
   if (request == UCS_OK) {
@@ -533,7 +533,7 @@ static inline LCI_error_t LCISD_post_putImms(LCIS_endpoint_t endpoint_pp,
   memset(tmp_rkey, 0, sizeof(LCIS_rkey_t));
   memcpy(tmp_rkey, &rkey, sizeof(LCIS_rkey_t));
   status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
-  LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
+  LCI_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
   // Prepare CQ entry associated with this operation
   LCISI_cq_entry* cq_entry = malloc(sizeof(LCISI_cq_entry));
@@ -567,7 +567,7 @@ static inline LCI_error_t LCISD_post_putImms(LCIS_endpoint_t endpoint_pp,
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
-  LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
+  LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
 
   // Use callback in case operation is completed immediately
   if (request == UCS_OK) {
@@ -595,7 +595,7 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
   memset(tmp_rkey, 0, sizeof(LCIS_rkey_t));
   memcpy(tmp_rkey, &rkey, sizeof(LCIS_rkey_t));
   status = ucp_ep_rkey_unpack(endpoint_p->peers[rank], tmp_rkey, &rkey_ptr);
-  LCM_Assert(status == UCS_OK, "Error in unpacking RMA key!");
+  LCI_Assert(status == UCS_OK, "Error in unpacking RMA key!");
 
   // Prepare CQ entry associated with this operation
   LCISI_cq_entry* cq_entry = malloc(sizeof(LCISI_cq_entry));
@@ -629,7 +629,7 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr, rkey_ptr, &put_param);
-  LCM_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
+  LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
 
   // Use callback in case operation is completed immediately
   if (request == UCS_OK) {

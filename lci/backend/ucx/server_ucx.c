@@ -89,7 +89,7 @@ void LCISD_server_init(LCI_device_t device, LCIS_server_t* s)
 void LCISD_server_fina(LCIS_server_t s)
 {
 //   LCISI_server_t* server = (LCISI_server_t*)s;
-//   LCM_Assert(server->endpoint_count == 0, "Endpoint count is not zero (%d)\n",
+//   LCI_Assert(server->endpoint_count == 0, "Endpoint count is not zero (%d)\n",
 //              server->endpoint_count);
 //   ucp_cleanup(server->context);
 //   free(s);
@@ -116,7 +116,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     }
 
     status = ucp_worker_create(endpoint_p->server->context, &params, &worker);
-    LCM_Assert(status == UCS_OK, "Error in creating UCP worker!");
+    LCI_Assert(status == UCS_OK, "Error in creating UCP worker!");
     endpoint_p->worker = worker;
 
     // Create lock
@@ -130,7 +130,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     ucp_address_t* my_addrs;
     size_t addrs_length;
     status = ucp_worker_get_address(worker, &my_addrs, &addrs_length);
-    LCM_Assert(status == UCS_OK, "Error in getting worker address!");
+    LCI_Assert(status == UCS_OK, "Error in getting worker address!");
 
     // Publish worker address
     // Worker address is encoded into a string of hex representation of original address
@@ -207,7 +207,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
         ucp_ep_h peer;
         ucs_status_t status1;
         status1 = ucp_ep_create(worker, &ep_params, &peer);
-        LCM_Assert(status1 == UCS_OK, "Error in creating peer endpoints!");
+        LCI_Assert(status1 == UCS_OK, "Error in creating peer endpoints!");
         (endpoint_p->peers)[i] = peer;
     }
     lcm_pm_barrier();
@@ -219,7 +219,7 @@ void LCISD_endpoint_fina(LCIS_endpoint_t endpoint_pp)
 //   lcm_pm_barrier();
 //   LCISI_endpoint_t* endpoint_p = (LCISI_endpoint_t*)endpoint_pp;
 //   int my_idx = --endpoint_p->server->endpoint_count;
-//   LCM_Assert(endpoint_p->server->endpoints[my_idx] == endpoint_p,
+//   LCI_Assert(endpoint_p->server->endpoints[my_idx] == endpoint_p,
 //              "This is not me!\n");
 //   endpoint_p->server->endpoints[my_idx] = NULL;
 //   for (int i = 0; i < LCI_NUM_PROCESSES; i++) {
