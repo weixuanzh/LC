@@ -4,13 +4,6 @@
 
 int main(int argc, char** args)
 {
-  // Number of messages to send
-  // int f = 0;
-  // int z = 0;
-  // while (f == 0) {
-  //   z++;
-  // }
-  
   int num_msgs = 10;
   if (argc > 1) num_msgs = atoi(args[1]);
   // Call `LCI_initialize` to initialize the runtime

@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.12)
-add_compile_options(-g)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(
     LCI
@@ -123,6 +122,9 @@ if(NOT LCI_WITH_LCT_ONLY)
   else()
     set(LCI_USE_SERVER_IBV ON)
     message(STATUS "Use ibv(libibverbs) as the network backend")
+  else()
+    set(LCI_USE_SERVER_UCX ON)
+    message(STATUS "Use ucx as the network backend")
   endif()
 
   # ############################################################################
