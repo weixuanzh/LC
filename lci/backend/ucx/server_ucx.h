@@ -143,26 +143,26 @@ static void send_handler(void* request, ucs_status_t status, void* args)
 // CQ
 static void put_handler(void* request, ucs_status_t status, void* args)
 {
+  // push_cq is not invoked in this handler, as there is a chance that it is called by the worker thread
+  // cq entry will be pushed in the callback of send, where LCIS_meta and rank are sent to remote
   LCISI_cb_args* cb_args = (LCISI_cb_args*)args;
   LCISI_cq_entry* cq_entry = cb_args->entry;
   LCISI_endpoint_t* ep = cq_entry->ep;
-
-  // Add entry to completion queue
-  push_cq(cq_entry);
 
   // Set arguments of am send callback to free allocated resources
   LCISI_cb_args* am_cb_args = malloc(sizeof(LCISI_cb_args));
   am_cb_args->packed_buf = cb_args->packed_buf;
   am_cb_args->buf = NULL;
-  am_cb_args->entry = NULL;
+  am_cb_args->entry = cq_entry;
 
-  // Send data to remote using active message
+  // Send data to remote (there are pre-posted recv, so we can simply send)
   // Data to send is stored in packed_buf member of cb_args (already prepared in
   // post_put function)
   ucs_status_ptr_t put_request;
   ucp_request_param_t params;
   params.op_attr_mask =
       UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA | UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
+  // cq_entry related to put is pushed in this callback
   params.cb.send = send_handler;
   params.user_data = (void*)am_cb_args;
   put_request =
