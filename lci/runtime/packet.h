@@ -32,7 +32,7 @@ struct __attribute__((packed)) LCII_packet_rts_t {
 };
 
 struct __attribute__((packed)) LCII_packet_rtr_iovec_info_t {
-  uint64_t rkey;
+  LCIS_rkey_t rkey;
   uintptr_t remote_addr_base;
   LCIS_offset_t remote_addr_offset;
 };
@@ -44,7 +44,7 @@ struct __attribute__((packed)) LCII_packet_rtr_t {
   union {
     // for LCI_LONG
     struct {
-      uint64_t rkey;
+      LCIS_rkey_t rkey;
       uintptr_t remote_addr_base;
       LCIS_offset_t remote_addr_offset;
       uint32_t
