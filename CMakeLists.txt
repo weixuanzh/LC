@@ -70,7 +70,7 @@ if(NOT LCI_WITH_LCT_ONLY)
         "Network backend to use. If LCI_FORCE_SERVER is set to OFF (default value),
       this variable is treated as a hint. Otherwise, it is treated as a requirement."
   )
-  set_property(CACHE LCI_SERVER PROPERTY STRINGS ofi ibv)
+  set_property(CACHE LCI_SERVER PROPERTY STRINGS ofi ibv ucx)
   option(LCI_FORCE_SERVER
          "Force LCI to use the network backend specified by LCI_SERVER" OFF)
   set(LCI_OFI_PROVIDER_HINT_DEFAULT

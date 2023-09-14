@@ -1,6 +1,9 @@
 #include "runtime/lcii.h"
 #include "backend/ucx/server_ucx.h"
 
+#define ENCODED_LIMIT 1024 // length of buffer to store encoded ucp address during initialization, user can change it
+#define DECODED_LIMIT 1024
+
 static int g_endpoint_num = 0;
 
 // Encodes a ucp address into its hex representation as a string
@@ -10,6 +13,9 @@ static int g_endpoint_num = 0;
 // it
 void encode_ucp_address(char* my_addrs, int addrs_length, char* encoded_value)
 {
+  // Encoding as hexdecimal at most doubles the length, so available length should be at least twice
+  // of the original length to avoid overflow
+  LCI_Assert(ENCODED_LIMIT >= 2 * addrs_length, "Buffer to store encoded address is too short! Use a higher ENCODED_LIMIT");
   int segs = (addrs_length + sizeof(uint64_t) - 1) / sizeof(uint64_t);
   for (int i = 0; i < segs; i++) {
     sprintf(encoded_value + 2 * i * sizeof(uint64_t), "%016lx",
@@ -21,6 +27,8 @@ void encode_ucp_address(char* my_addrs, int addrs_length, char* encoded_value)
 // no need to provide length as encoded_addrs is one single string
 void decode_ucp_address(char* encoded_addrs, char* decoded_addrs)
 {
+  // Avoid overflow
+  LCI_Assert(DECODED_LIMIT >= strlen(encoded_addrs), "Buffer to store decoded address is too short! Use a higher DECODED_LIMIT");
   int segs = (strlen(encoded_addrs) + 16 - 1) / 16;
   char tmp_buf[17];
   tmp_buf[16] = 0;
@@ -136,7 +144,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
 #endif
 
   // Create completion queue
-  LCM_dq_init(&endpoint_p->completed_ops, 8192);
+  LCM_dq_init(&endpoint_p->completed_ops, 2 * LCI_PACKET_SIZE);
 
   // Exchange endpoint address
   endpoint_p->peers = LCIU_malloc(sizeof(ucp_ep_h) * LCI_NUM_PROCESSES);
@@ -153,9 +161,9 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
   memset(seg_key, 0, LCM_PMI_STRING_LIMIT + 1);
 
   // Buffers to store published contents
-  char encoded_value[1024];
+  char encoded_value[ENCODED_LIMIT];
   char seg_value[sizeof(size_t) + 1];
-  memset(encoded_value, 0, 1024);
+  memset(encoded_value, 0, ENCODED_LIMIT);
   memset(seg_value, 0, sizeof(size_t) + 1);
 
   // Set key
@@ -176,8 +184,8 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
 
   // Receive peer address
   // Buffer to store decoded address
-  char decoded_value[1024];
-  memset(decoded_value, 0, 1024);
+  char decoded_value[DECODED_LIMIT];
+  memset(decoded_value, 0, DECODED_LIMIT);
 
   for (int i = 0; i < LCI_NUM_PROCESSES; i++) {
     size_t size;
@@ -197,8 +205,8 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
       memset(seg_key, 0, LCM_PMI_STRING_LIMIT + 1);
 
       // Reset values
-      memset(encoded_value, 0, 1024);
-      memset(seg_value, 0, LCM_PMI_STRING_LIMIT + 1);
+      memset(encoded_value, 0, ENCODED_LIMIT);
+      memset(seg_value, 0, sizeof(size_t) + 1);
 
       // Set correct keys
       sprintf(seg_key, "LCI_SEG_%d_%d", endpoint_id, i);
@@ -210,7 +218,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
       get_address(*((size_t*)seg_value), endpoint_id, i, encoded_value);
 
       // Reset buffer, decode address
-      memset(decoded_value, 0, 1024);
+      memset(decoded_value, 0, DECODED_LIMIT);
       decode_ucp_address(encoded_value, decoded_value);
 
       // Set peer address
