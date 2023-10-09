@@ -650,6 +650,12 @@ void worker_handler(Fn&& fn, int id, Args&&... args)
 {
   TRD_RANK_ME = id;
   to_progress = false;
+  #ifdef LCI_USE_SERVER_UCX
+    if (LCI_UCX_NO_PROGRESS_THREAD == true) {
+      printf("\nAll threads will call progress");
+      to_progress = true;
+    }
+  #endif
   fn(std::forward<Args>(args)...);
   //  std::invoke(std::forward<Fn>(fn),
   //              std::forward<Args>(args)...);
@@ -687,29 +693,52 @@ void run(Context& ctx, Fn&& fn, Args&&... args)
   if (ctx.config.nthreads > 1) {
     // Multithreaded version
     // initialize progress thread
-    progress_exit = false;
-    std::thread t(progress_handler, ctx.device);
-    if (ctx.config.thread_pin) set_affinity(t.native_handle(), 0);
-    progress_pool.push_back(std::move(t));
 
-    // initialize worker threads
-    for (size_t i = 0; i < ctx.config.nthreads - 1; ++i) {
-      std::thread t(
-          worker_handler<fn_t, typename std::remove_reference<Args>::type...>,
-          +fn, i, args...);
-      if (ctx.config.thread_pin)
-        set_affinity(t.native_handle(), (i + 1) % NPROCESSORS);
-      worker_pool.push_back(std::move(t));
+    if (LCI_UCX_NO_PROGRESS_THREAD == true) {
+      // All threads are worker
+      // initialize worker threads
+      // worker thread count is increased by 1
+      for (size_t i = 0; i < ctx.config.nthreads; ++i) {
+        std::thread t(
+            worker_handler<fn_t, typename std::remove_reference<Args>::type...>,
+            +fn, i, args...);
+        if (ctx.config.thread_pin)
+          set_affinity(t.native_handle(), (i + 1) % NPROCESSORS);
+        worker_pool.push_back(std::move(t));
+      }
+
+      // wait for workers to finish
+      for (size_t i = 0; i < ctx.config.nthreads; ++i) {
+        worker_pool[i].join();
+      }
+
+    } else {
+      // normal case, 1 progress, the rest are workers
+      progress_exit = false;
+      std::thread t(progress_handler, ctx.device);
+      if (ctx.config.thread_pin) set_affinity(t.native_handle(), 0);
+      progress_pool.push_back(std::move(t));
+
+      // initialize worker threads
+      for (size_t i = 0; i < ctx.config.nthreads - 1; ++i) {
+        std::thread t(
+            worker_handler<fn_t, typename std::remove_reference<Args>::type...>,
+            +fn, i, args...);
+        if (ctx.config.thread_pin)
+          set_affinity(t.native_handle(), (i + 1) % NPROCESSORS);
+        worker_pool.push_back(std::move(t));
+      }
+
+      // wait for workers to finish
+      for (size_t i = 0; i < ctx.config.nthreads - 1; ++i) {
+        worker_pool[i].join();
+      }
+
+      // wait for progress threads to finish
+      progress_exit = true;
+      progress_pool[0].join();
     }
-
-    // wait for workers to finish
-    for (size_t i = 0; i < ctx.config.nthreads - 1; ++i) {
-      worker_pool[i].join();
-    }
-
-    // wait for progress threads to finish
-    progress_exit = true;
-    progress_pool[0].join();
+    
   } else {
     // Singlethreaded version
     TRD_RANK_ME = 0;

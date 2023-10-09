@@ -3,7 +3,7 @@
 
 #include <ucp/api/ucp.h>
 
-struct LCISI_endpoint_t;
+struct LCISI_endpoint_t;  
 
 typedef struct __attribute__((aligned(LCI_CACHE_LINE))) LCISI_memh_wrapper {
   ucp_mem_h memh;
@@ -31,9 +31,8 @@ typedef struct __attribute__((aligned(LCI_CACHE_LINE))) LCISI_endpoint_t {
   ucp_worker_h worker;
   ucp_ep_h* peers;
   LCM_dequeue_t completed_ops;
-#ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
+  LCIU_spinlock_t try_lock;
   LCIU_spinlock_t lock;
-#endif
 } LCISI_endpoint_t;
 
 // pack meta (4 bytes) and rank (4 bytes) into ucp_tag_t (8 bytes)
@@ -58,14 +57,15 @@ static void push_cq(void* entry)
 {
   LCISI_cq_entry* cq_entry = (LCISI_cq_entry*)entry;
   LCISI_endpoint_t* ep = cq_entry->ep;
-#ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
-  LCIU_acquire_spinlock(&(ep->lock));
-#endif
+
+  if (LCI_UCX_NO_PROGRESS_THREAD == true) {
+    LCIU_acquire_spinlock(&(ep->lock));
+  }
   int status = LCM_dq_push_top(&(ep->completed_ops), entry);
   LCI_Assert(status != LCM_RETRY, "Too many entries in CQ!");
-#ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
-  LCIU_release_spinlock(&(ep->lock));
-#endif
+  if (LCI_UCX_NO_PROGRESS_THREAD == true) {
+    LCIU_release_spinlock(&(ep->lock)); 
+  }
 }
 
 // Struct to use when passing arguments to handler functions
@@ -240,10 +240,12 @@ static inline int LCISD_poll_cq(LCIS_endpoint_t endpoint_pp,
   LCISI_endpoint_t* endpoint_p = (LCISI_endpoint_t*)endpoint_pp;
   ucp_worker_progress(endpoint_p->worker);
   int num_entries = 0;
+  //printf("\nthread id:%lu, rank: %d", pthread_self(), LCI_RANK);
 
-#ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
-  LCIU_acquire_spinlock(&(endpoint_p->lock));
-#endif
+  if (LCI_UCX_NO_PROGRESS_THREAD == true) {
+    LCIU_acquire_spinlock(&(endpoint_p->lock));
+  }
+
   while (num_entries < LCI_CQ_MAX_POLL &&
          LCM_dq_size(endpoint_p->completed_ops) > 0) {
     LCISI_cq_entry* cq_entry =
@@ -256,9 +258,9 @@ static inline int LCISD_poll_cq(LCIS_endpoint_t endpoint_pp,
     num_entries++;
     free(cq_entry);
   }
-#ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
-  LCIU_release_spinlock(&(endpoint_p->lock));
-#endif
+  if (LCI_UCX_NO_PROGRESS_THREAD == true) {
+    LCIU_release_spinlock(&(endpoint_p->lock));
+  }
 
   return num_entries;
 }
@@ -297,8 +299,17 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp,
   recv_param.memh = ((LCISI_memh_wrapper*)mr.mr_p)->memh;
 
   // Receive message, check for errors
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    if (!LCIU_try_acquire_spinlock(&(endpoint_p->try_lock))) {
+      return LCI_ERR_RETRY_LOCK;
+    }
+    
+  }
   request = ucp_tag_recv_nbx(endpoint_p->worker, buf, size, 0, 0,
                              &recv_param);
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    LCIU_release_spinlock(&(endpoint_p->try_lock));
+  }
   if (UCS_PTR_IS_ERR(request)) {
     LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in recving message!");
     return LCI_ERR_FATAL;
@@ -339,8 +350,16 @@ static inline LCI_error_t LCISD_post_sends(LCIS_endpoint_t endpoint_pp,
 
   // Send message, check for errors
   // LCIS_meta_t and source rank are delievered in ucp tag
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    if (!LCIU_try_acquire_spinlock(&(endpoint_p->try_lock))) {
+      return LCI_ERR_RETRY_LOCK;
+    }
+  }
   request = ucp_tag_send_nbx(endpoint_p->peers[rank], buf, size,
                              pack_tag(meta, LCI_RANK), &send_param);
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    LCIU_release_spinlock(&(endpoint_p->try_lock));
+  }
   if (UCS_PTR_IS_ERR(request)) {
     LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in posting sends!");
     return LCI_ERR_FATAL;
@@ -382,8 +401,16 @@ static inline LCI_error_t LCISD_post_send(LCIS_endpoint_t endpoint_pp, int rank,
   send_param.memory_type = UCS_MEMORY_TYPE_HOST;
 
   // Send message, check for errors
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    if (!LCIU_try_acquire_spinlock(&(endpoint_p->try_lock))) {
+      return LCI_ERR_RETRY_LOCK;
+    }
+  }
   request = ucp_tag_send_nbx(endpoint_p->peers[rank], buf, size,
                              pack_tag(meta, LCI_RANK), &send_param);
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    LCIU_release_spinlock(&(endpoint_p->try_lock));
+  }
   if (UCS_PTR_IS_ERR(request)) {
     LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in posting send!");
     return LCI_ERR_FATAL;
@@ -436,8 +463,16 @@ static inline LCI_error_t LCISD_post_puts(LCIS_endpoint_t endpoint_pp, int rank,
   // Send message, check for errors
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    if (!LCIU_try_acquire_spinlock(&(endpoint_p->try_lock))) {
+      return LCI_ERR_RETRY_LOCK;
+    }
+  }
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr,
                         rkey_ptr, &put_param);
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    LCIU_release_spinlock(&(endpoint_p->try_lock));
+  }
   LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
 
   return LCI_OK;
@@ -486,8 +521,16 @@ static inline LCI_error_t LCISD_post_put(LCIS_endpoint_t endpoint_pp, int rank,
   // Send message, check for errors
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    if (!LCIU_try_acquire_spinlock(&(endpoint_p->try_lock))) {
+      return LCI_ERR_RETRY_LOCK;
+    }
+  }
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr,
                         rkey_ptr, &put_param);
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    LCIU_release_spinlock(&(endpoint_p->try_lock));
+  }
   LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");
 
   return LCI_OK;
@@ -542,9 +585,16 @@ static inline LCI_error_t LCISD_post_putImms(LCIS_endpoint_t endpoint_pp,
   // Send message, check for errors
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    if (!LCIU_try_acquire_spinlock(&(endpoint_p->try_lock))) {
+      return LCI_ERR_RETRY_LOCK;
+    }
+  }
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr,
                         rkey_ptr, &put_param);
-  
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    LCIU_release_spinlock(&(endpoint_p->try_lock));
+  }
   if (request == NULL) {
     ucs_status_t unused;
     put_handler(NULL, unused, cb_args);
@@ -604,8 +654,16 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
   // Send message, check for errors
   uint64_t remote_addr = base + offset;
   ucs_status_ptr_t request;
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    if (!LCIU_try_acquire_spinlock(&(endpoint_p->try_lock))) {
+      return LCI_ERR_RETRY_LOCK;
+    }
+  }  
   request = ucp_put_nbx(endpoint_p->peers[rank], buf, size, remote_addr,
                         rkey_ptr, &put_param);
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    LCIU_release_spinlock(&(endpoint_p->try_lock));
+  }
   LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA put operation!");
 
 

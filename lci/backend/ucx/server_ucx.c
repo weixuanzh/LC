@@ -46,22 +46,22 @@ void publish_address(char* encoded_addrs, int endpoint_id, size_t* num_segments)
 {
   size_t length = strlen(encoded_addrs);
   *num_segments =
-      (length + LCM_PMI_STRING_LIMIT - 2) / (LCM_PMI_STRING_LIMIT - 1);
+      (length + LCT_PMI_STRING_LIMIT - 2) / (LCT_PMI_STRING_LIMIT - 1);
   // store 254 bytes of actual data and 1 byte of terminator (null)
   for (int i = 0; i < *num_segments; i++) {
-    char seg[LCM_PMI_STRING_LIMIT];
-    char seg_key[LCM_PMI_STRING_LIMIT];
-    memset(seg, 0, LCM_PMI_STRING_LIMIT);
-    memset(seg_key, 0, LCM_PMI_STRING_LIMIT);
+    char seg[LCT_PMI_STRING_LIMIT];
+    char seg_key[LCT_PMI_STRING_LIMIT];
+    memset(seg, 0, LCT_PMI_STRING_LIMIT);
+    memset(seg_key, 0, LCT_PMI_STRING_LIMIT);
     if (i == *num_segments - 1) {
-      memcpy(seg, encoded_addrs + i * (LCM_PMI_STRING_LIMIT - 1),
-             length - i * (LCM_PMI_STRING_LIMIT - 1));
+      memcpy(seg, encoded_addrs + i * (LCT_PMI_STRING_LIMIT - 1),
+             length - i * (LCT_PMI_STRING_LIMIT - 1));
     } else {
-      memcpy(seg, encoded_addrs + i * (LCM_PMI_STRING_LIMIT - 1),
-             LCM_PMI_STRING_LIMIT - 1);
+      memcpy(seg, encoded_addrs + i * (LCT_PMI_STRING_LIMIT - 1),
+             LCT_PMI_STRING_LIMIT - 1);
     }
     sprintf(seg_key, "LCI_ENC_%d_%d_%d", endpoint_id, LCI_RANK, i);
-    lcm_pm_publish(seg_key, seg);
+    LCT_pmi_publish(seg_key, seg);
   }
 }
 
@@ -71,14 +71,14 @@ void get_address(size_t num_segments, int endpoint_id, int rank,
                  char* combined_addrs)
 {
   for (int i = 0; i < num_segments; i++) {
-    char seg[LCM_PMI_STRING_LIMIT];
-    char seg_key[LCM_PMI_STRING_LIMIT];
-    memset(seg, 0, LCM_PMI_STRING_LIMIT);
-    memset(seg_key, 0, LCM_PMI_STRING_LIMIT);
+    char seg[LCT_PMI_STRING_LIMIT];
+    char seg_key[LCT_PMI_STRING_LIMIT];
+    memset(seg, 0, LCT_PMI_STRING_LIMIT);
+    memset(seg_key, 0, LCT_PMI_STRING_LIMIT);
     sprintf(seg_key, "LCI_ENC_%d_%d_%d", endpoint_id, rank, i);
-    lcm_pm_getname(rank, seg_key, seg);
-    memcpy(combined_addrs + i * (LCM_PMI_STRING_LIMIT - 1), seg,
-           LCM_PMI_STRING_LIMIT - 1);
+    LCT_pmi_getname(rank, seg_key, seg);
+    memcpy(combined_addrs + i * (LCT_PMI_STRING_LIMIT - 1), seg,
+           LCT_PMI_STRING_LIMIT - 1);
   }
 }
 
@@ -129,7 +129,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
   ucs_status_t status;
   params.field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
   if (single_threaded) {
-    params.thread_mode = UCS_THREAD_MODE_SINGLE;
+    params.thread_mode = UCS_THREAD_MODE_MULTI;
   } else {
     params.thread_mode = UCS_THREAD_MODE_MULTI;
   }
@@ -139,9 +139,10 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
   endpoint_p->worker = worker;
 
 // Create lock
-#ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
+LCIU_spinlock_init(&(endpoint_p->try_lock));
+if (LCI_UCX_NO_PROGRESS_THREAD == true) {
   LCIU_spinlock_init(&(endpoint_p->lock));
-#endif
+}
 
   // Create completion queue
   LCM_dq_init(&endpoint_p->completed_ops, 2 * LCI_PACKET_SIZE);
@@ -157,8 +158,8 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
   // Worker address is encoded into a string of hex representation of original
   // address Keys to use when publishing address (number of segments encoded
   // address is divided into)
-  char seg_key[LCM_PMI_STRING_LIMIT + 1];
-  memset(seg_key, 0, LCM_PMI_STRING_LIMIT + 1);
+  char seg_key[LCT_PMI_STRING_LIMIT + 1];
+  memset(seg_key, 0, LCT_PMI_STRING_LIMIT + 1);
 
   // Buffers to store published contents
   char encoded_value[ENCODED_LIMIT];
@@ -178,9 +179,9 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
 
   // Publish number of segments that the encoded addrs is divided into
   memcpy(seg_value, &num_segments, sizeof(size_t));
-  lcm_pm_publish(seg_key, seg_value);
+  LCT_pmi_publish(seg_key, seg_value);
 
-  lcm_pm_barrier();
+  LCT_pmi_barrier();
 
   // Receive peer address
   // Buffer to store decoded address
@@ -202,7 +203,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     // Receive information (address) required to create ucp endpoint
     if (i != LCI_RANK) {
       // Reset keys
-      memset(seg_key, 0, LCM_PMI_STRING_LIMIT + 1);
+      memset(seg_key, 0, LCT_PMI_STRING_LIMIT + 1);
 
       // Reset values
       memset(encoded_value, 0, ENCODED_LIMIT);
@@ -212,7 +213,7 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
       sprintf(seg_key, "LCI_SEG_%d_%d", endpoint_id, i);
 
       // Get number of segments
-      lcm_pm_getname(i, seg_key, seg_value);
+      LCT_pmi_getname(i, seg_key, seg_value);
 
       // Combine segmented address
       get_address(*((size_t*)seg_value), endpoint_id, i, encoded_value);
@@ -232,14 +233,14 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
     LCI_Assert(status1 == UCS_OK, "Error in creating peer endpoints!");
     (endpoint_p->peers)[i] = peer;
   }
-  lcm_pm_barrier();
+  LCT_pmi_barrier();
 }
 
 // Currently empty, otherwise uncompleted request (by preposting receive) will
 // result in errors
 void LCISD_endpoint_fina(LCIS_endpoint_t endpoint_pp)
 {
-  //   lcm_pm_barrier();
+  //   LCT_pmi_barrier();
   //   LCISI_endpoint_t* endpoint_p = (LCISI_endpoint_t*)endpoint_pp;
   //   int my_idx = --endpoint_p->server->endpoint_count;
   //   LCI_Assert(endpoint_p->server->endpoints[my_idx] == endpoint_p,

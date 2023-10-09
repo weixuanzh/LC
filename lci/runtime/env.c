@@ -27,6 +27,8 @@ LCI_API int LCI_RECV_SLOW_DOWN_USEC;
 LCI_API LCI_device_t LCI_UR_DEVICE;
 LCI_API LCI_endpoint_t LCI_UR_ENDPOINT;
 LCI_API LCI_comp_t LCI_UR_CQ;
+LCI_API bool LCI_UCX_USE_TRY_LOCK;
+LCI_API bool LCI_UCX_NO_PROGRESS_THREAD;
 
 void LCII_env_init_cq_type();
 
@@ -84,6 +86,9 @@ void LCII_env_init(int num_proc, int rank)
                (LCI_PACKET_SIZE - sizeof(struct LCII_packet_context) -
                 sizeof(struct LCII_packet_rtr_t)) /
                    sizeof(struct LCII_packet_rtr_iovec_info_t));
-
+  LCI_UCX_NO_PROGRESS_THREAD = 
+      LCIU_getenv_or("LCI_UCX_NO_PROGRESS_THREAD", false);
+  LCI_UCX_USE_TRY_LOCK = 
+      LCIU_getenv_or("LCI_UCX_USE_TRY_LOCK", false);
   LCII_env_init_cq_type();
 }
