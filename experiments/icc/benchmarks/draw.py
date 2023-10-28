@@ -1,6 +1,7 @@
 import pandas as pd
 import os,sys
 from matplotlib import pyplot as plt
+plt.switch_backend('agg')
 sys.path.append("../../include")
 from draw_simple import *
 
@@ -53,12 +54,12 @@ def plot(df, x_key, y_key, tag_key, title):
 
 def batch(df):
     df1 = df[df.apply(lambda row:
-                      row["job"] == "lt",
+                      row["job"] == "mlt",
                       axis=1)]
     plot(df1, "Size(B)", "latency(us)", "task", "lt")
 
     df1 = df[df.apply(lambda row:
-                      row["job"] == "bw",
+                      row["job"] == "mbw",
                       axis=1)]
     plot(df1, "Size(B)", "bandwidth(MB/s)", "task", "bw")
 

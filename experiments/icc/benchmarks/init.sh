@@ -22,10 +22,9 @@ cd init
 
 # setup module environment
 module purge
-module load cmake
+module load cmake/3.18.4
 module load openmpi
-export CC=gcc
-export CXX=g++
+
 
 # record build status
 record_env
@@ -41,10 +40,11 @@ LCI_INSTALL_PATH=$(realpath "../install")
 cmake -DCMAKE_INSTALL_PREFIX=${LCI_INSTALL_PATH} \
       -DCMAKE_BUILD_TYPE=Release \
       -DLCI_DEBUG=OFF \
-      -DLCI_SERVER=ibv \
+      -DLCI_SERVER=ucx \
       -DSRUN_EXE=srun \
       -DSRUN_EXTRA_ARG="--mpi=pmi2" \
       -DLCI_PACKET_SIZE_DEFAULT=69632 \
+      -DCMAKE_PREFIX_PATH=/home/weixuan2/library/ucx-library-1.15 \
       -L \
       ${LCI_SOURCE_PATH} | tee init-cmake.log 2>&1 || { echo "cmake error!"; exit 1; }
 cmake -LAH . >> init-cmake.log

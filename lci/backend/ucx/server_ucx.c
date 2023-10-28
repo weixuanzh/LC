@@ -139,10 +139,15 @@ void LCISD_endpoint_init(LCIS_server_t server_pp, LCIS_endpoint_t* endpoint_pp,
   endpoint_p->worker = worker;
 
 // Create lock
-#ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
-  LCIU_spinlock_init(&(endpoint_p->lock));
-#endif
-
+  #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
+    LCIU_spinlock_init(&(endpoint_p->cq_lock));
+    printf("\nUsing multiple progress threads");
+  #endif
+  if (LCI_UCX_USE_TRY_LOCK == true) {
+    LCIU_spinlock_init(&(endpoint_p->try_lock));
+    printf("\nUsing try lock for progress and send/recv");
+    if (LCI_UCX_PROGRESS_FOCUSED) printf("\nGiving priority to lock for progress thread");
+  }
   // Create completion queue
   LCM_dq_init(&endpoint_p->completed_ops, 2 * LCI_PACKET_SIZE);
 
