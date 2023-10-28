@@ -18,7 +18,7 @@ typedef struct LCIS_mr_t {
 
 #ifdef LCI_USE_SERVER_UCX
 typedef struct {
-  char tmp[16];
+  char tmp[128];
 } LCIS_rkey_t;
 #else
 typedef uint64_t LCIS_rkey_t;

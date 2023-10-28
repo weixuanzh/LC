@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=cs
+#SBATCH --partition=secondary
 #SBATCH --time=15:00
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=32
@@ -25,8 +25,6 @@ echo "srun mlt LCI 2m multithread ${SLURM_TASKS_PER_NODE}"
 srun -n 2 --mpi=pmi2 ${PATH_TO_EXE}/lcitb_pt2pt --op 2m --nthreads ${SLURM_TASKS_PER_NODE} --thread-pin 1 --send-comp-type=sync --recv-comp-type=sync
 echo "srun mlt LCI 2m multithread ${SLURM_TASKS_PER_NODE} dyn"
 srun -n 2 --mpi=pmi2 ${PATH_TO_EXE}/lcitb_pt2pt --op 2m --nthreads ${SLURM_TASKS_PER_NODE} --thread-pin 1 --send-comp-type=sync --recv-comp-type=sync --send-dyn 1 --recv-dyn 1
-echo "srun mlt LCI 2l multithread ${SLURM_TASKS_PER_NODE}"
-srun -n 2 --mpi=pmi2 ${PATH_TO_EXE}/lcitb_pt2pt --op 2l --nthreads ${SLURM_TASKS_PER_NODE} --thread-pin 1 --send-comp-type=sync --recv-comp-type=sync --max-msg-size 1048576
 echo "srun mlt LCI 2l multithread ${SLURM_TASKS_PER_NODE} pre-reg"
 srun -n 2 --mpi=pmi2 ${PATH_TO_EXE}/lcitb_pt2pt --op 2l --nthreads ${SLURM_TASKS_PER_NODE} --thread-pin 1 --send-comp-type=sync --recv-comp-type=sync --send-reg 1 --recv-reg 1 --max-msg-size 1048576
 
@@ -36,7 +34,5 @@ echo "srun mlt LCI 1m multithread ${SLURM_TASKS_PER_NODE}"
 srun -n 2 --mpi=pmi2 ${PATH_TO_EXE}/lcitb_pt2pt --op 1m --nthreads ${SLURM_TASKS_PER_NODE} --thread-pin 1 --send-comp-type=sync
 echo "srun mlt LCI 1m multithread ${SLURM_TASKS_PER_NODE} dyn"
 srun -n 2 --mpi=pmi2 ${PATH_TO_EXE}/lcitb_pt2pt --op 1m --nthreads ${SLURM_TASKS_PER_NODE} --thread-pin 1 --send-comp-type=sync --send-dyn 1
-echo "srun mlt LCI 1l multithread ${SLURM_TASKS_PER_NODE}"
-srun -n 2 --mpi=pmi2 ${PATH_TO_EXE}/lcitb_pt2pt --op 1l --nthreads ${SLURM_TASKS_PER_NODE} --thread-pin 1 --send-comp-type=sync --max-msg-size 1048576
 echo "srun mlt LCI 1l multithread ${SLURM_TASKS_PER_NODE} pre-reg"
 srun -n 2 --mpi=pmi2 ${PATH_TO_EXE}/lcitb_pt2pt --op 1l --nthreads ${SLURM_TASKS_PER_NODE} --thread-pin 1 --send-comp-type=sync --send-reg 1 --max-msg-size 1048576
