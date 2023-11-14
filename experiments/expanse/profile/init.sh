@@ -21,11 +21,16 @@ mkdir_s ./init
 cd init
 
 # setup module environment
+
 module purge
 module load DefaultModules
-module load gcc
-module load cmake
-module load openmpi
+module load gpu/0.17.3b
+module load cpu/0.17.3b
+#module load intel/19.1.3.304/vecir2b
+module load gcc/10.2.0
+module load cmake/3.21.4
+#module load openmpi
+
 export CC=gcc
 export CXX=g++
 
@@ -43,7 +48,9 @@ LCI_INSTALL_PATH=$(realpath "../install")
 cmake -DCMAKE_INSTALL_PREFIX=${LCI_INSTALL_PATH} \
       -DCMAKE_BUILD_TYPE=RelWithDebInfo \
       -DLCI_DEBUG=OFF \
-      -DLCI_SERVER=ibv \
+      -DLCI_SERVER=ucx \
+      -DLCI_ENABLE_MULTITHREAD_PROGRESS=1 \
+      -DCMAKE_PREFIX_PATH=/home/wzheng/library/ucx \
       -DLCI_PM_BACKEND=pmi1 \
       -DSRUN_EXE=srun \
       -DSRUN_EXTRA_ARG="--mpi=pmi2" \
