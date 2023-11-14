@@ -1,8 +1,8 @@
 #include "runtime/lcii.h"
 #include "backend/ucx/server_ucx.h"
 
-#define ENCODED_LIMIT 1024 // length of buffer to store encoded ucp address during initialization, user can change it
-#define DECODED_LIMIT 1024
+#define ENCODED_LIMIT 8192 // length of buffer to store encoded ucp address during initialization, user can change it
+#define DECODED_LIMIT 8192
 
 static int g_endpoint_num = 0;
 

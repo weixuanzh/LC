@@ -249,12 +249,14 @@ static inline LCIS_mr_t LCISD_rma_reg(LCIS_server_t s, void* buf, size_t size)
   params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
                       UCP_MEM_MAP_PARAM_FIELD_LENGTH |
                       UCP_MEM_MAP_PARAM_FIELD_PROT | 
-                      UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE;
+                      UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE |
+                      UCP_MEM_MAP_PARAM_FIELD_FLAGS;
   params.address = buf;
   params.length = size;
   params.memory_type = UCS_MEMORY_TYPE_HOST;
   params.prot = UCP_MEM_MAP_PROT_REMOTE_WRITE | UCP_MEM_MAP_PROT_LOCAL_READ |
                 UCP_MEM_MAP_PROT_LOCAL_WRITE;
+  params.flags = UCP_MEM_MAP_NONBLOCK;
   // params.exported_memh_buffer = malloc(sizeof(ucp_mem_h));
   status = ucp_mem_map(server->context, &params, &memh);
   LCI_Assert(status == UCS_OK, "Error in server deregistration!");
