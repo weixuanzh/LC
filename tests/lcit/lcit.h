@@ -79,7 +79,7 @@ void checkConfig(Config& config)
 
 void printConfig(const Config& config)
 {
-  printf(
+  fprintf(stderr, 
       "Configuration:\n"
       "op: %d\n"
       "send_dyn: %d\n"
