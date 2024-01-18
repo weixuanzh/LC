@@ -252,14 +252,14 @@ static inline LCIS_mr_t LCISD_rma_reg(LCIS_server_t s, void* buf, size_t size)
                       UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE |
                       UCP_MEM_MAP_PARAM_FIELD_FLAGS;
   params.address = buf;
-  params.length = size;
+  params.length = (size + 8 - 1) / 8;
   params.memory_type = UCS_MEMORY_TYPE_HOST;
   params.prot = UCP_MEM_MAP_PROT_REMOTE_WRITE | UCP_MEM_MAP_PROT_LOCAL_READ |
                 UCP_MEM_MAP_PROT_LOCAL_WRITE;
   params.flags = UCP_MEM_MAP_NONBLOCK;
   // params.exported_memh_buffer = malloc(sizeof(ucp_mem_h));
   status = ucp_mem_map(server->context, &params, &memh);
-  LCI_Assert(status == UCS_OK, "Error in server deregistration!");
+  LCI_Assert(status == UCS_OK, "Error in server registration!");
   mr.address = buf;
   mr.length = size;
   wrapper->context = server->context;
@@ -317,7 +317,8 @@ static inline int LCISD_poll_cq(LCIS_endpoint_t endpoint_pp,
   }
 
   #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
-    LCIU_acquire_spinlock(&(endpoint_p->cq_lock));
+    if (!LCIU_try_acquire_spinlock(&(endpoint_p->cq_lock))) return 0;
+    // LCIU_acquire_spinlock(&(endpoint_p->cq_lock));
   #endif
   while (num_entries < LCI_CQ_MAX_POLL &&
          LCM_dq_size(endpoint_p->completed_ops) > 0) {
@@ -334,6 +335,7 @@ static inline int LCISD_poll_cq(LCIS_endpoint_t endpoint_pp,
   #ifdef LCI_ENABLE_MULTITHREAD_PROGRESS
     LCIU_release_spinlock(&(endpoint_p->cq_lock));
   #endif
+
   return num_entries;
 }
 
@@ -526,7 +528,7 @@ static inline LCI_error_t LCISD_post_puts(LCIS_endpoint_t endpoint_pp, int rank,
   put_param.memory_type = UCS_MEMORY_TYPE_HOST;
 
   // Send message, check for errors
-  uint64_t remote_addr = base + offset;
+  uint64_t remote_addr = (uint64_t)((char*)base + offset);
   ucs_status_ptr_t request;
   if (LCI_UCX_USE_TRY_LOCK) {
     if (!LCIU_try_acquire_spinlock(&(endpoint_p->try_lock))) {
@@ -586,7 +588,7 @@ static inline LCI_error_t LCISD_post_put(LCIS_endpoint_t endpoint_pp, int rank,
   put_param.memory_type = UCS_MEMORY_TYPE_HOST;
 
   // Send message, check for errors
-  uint64_t remote_addr = base + offset;
+  uint64_t remote_addr = (uint64_t)((char*)base + offset);
   ucs_status_ptr_t request;
   if (LCI_UCX_USE_TRY_LOCK) {
     if (!LCIU_try_acquire_spinlock(&(endpoint_p->try_lock))) {
@@ -695,7 +697,7 @@ static inline LCI_error_t LCISD_post_putImms(LCIS_endpoint_t endpoint_pp,
   
   #ifndef LCI_UCX_USE_SEGMENTED_PUT
   // Send message, check for errors
-  uint64_t remote_addr = base + offset;
+  uint64_t remote_addr = (uint64_t)((char*)base + offset);
   ucs_status_ptr_t request;
   if (LCI_UCX_USE_TRY_LOCK) {
     if (!LCIU_try_acquire_spinlock(&(endpoint_p->try_lock))) {
@@ -707,7 +709,7 @@ static inline LCI_error_t LCISD_post_putImms(LCIS_endpoint_t endpoint_pp,
   LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA puts operation!");  
   if (request == NULL) {
     ucs_status_t unused;
-    put_handler(NULL, unused, cb_args);
+    put_handler1(NULL, unused, cb_args);
   }                        
   if (LCI_UCX_USE_TRY_LOCK) {
     LCIU_release_spinlock(&(endpoint_p->try_lock));
@@ -803,7 +805,7 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
   put_param.memory_type = UCS_MEMORY_TYPE_HOST;
   #ifndef LCI_UCX_USE_SEGMENTED_PUT
   // Send message, check for errors
-  uint64_t remote_addr = base + offset;
+  uint64_t remote_addr = (uint64_t)((char*)base + offset);
   ucs_status_ptr_t request;
   if (LCI_UCX_USE_TRY_LOCK) {
     if (!LCIU_try_acquire_spinlock(&(endpoint_p->try_lock))) {
@@ -815,7 +817,7 @@ static inline LCI_error_t LCISD_post_putImm(LCIS_endpoint_t endpoint_pp,
   LCI_Assert(!UCS_PTR_IS_ERR(request), "Error in RMA put operation!");
   if (request == NULL) {
     ucs_status_t unused;
-    put_handler(NULL, unused, cb_args);
+    put_handler1(NULL, unused, cb_args);
   }                        
   if (LCI_UCX_USE_TRY_LOCK) {
     LCIU_release_spinlock(&(endpoint_p->try_lock));
