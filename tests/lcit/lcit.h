@@ -440,9 +440,13 @@ Context initCtx(Config config)
   LCI_plist_free(&plist);
 
   initData(ctx);
-  if (config.nthreads > 1)
-    ctx.threadBarrier = new ThreadBarrier(config.nthreads - 1);
-
+  if (config.nthreads > 1) {
+    if (config.no_progress_thread == 0) {
+      ctx.threadBarrier = new ThreadBarrier(config.nthreads - 1);
+    } else {
+      ctx.threadBarrier = new ThreadBarrier(config.nthreads);
+    }
+  }
   return ctx;
 }
 
@@ -711,7 +715,7 @@ void run(Context& ctx, Fn&& fn, Args&&... args)
   // Multithreaded version
     if (ctx.config.no_progress_thread == 0) {
 
-      // All threads will call LCI_progress and send/recv messages
+      // One progress thread, the others are worker
       // initialize progress thread
       progress_exit = false;
       std::thread t(progress_handler, ctx.device);
@@ -737,7 +741,7 @@ void run(Context& ctx, Fn&& fn, Args&&... args)
 
     } else {
 
-      // Progress thread (1 thread) only calls LCI_progress, worker threads only send/recv messages
+      // all threads will call progress and send/recv
       for (size_t i = 0; i < ctx.config.nthreads; ++i) {
         std::thread t(
           worker_progress_handler<fn_t, typename std::remove_reference<Args>::type...>,
