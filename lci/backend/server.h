@@ -93,6 +93,9 @@ static inline LCI_error_t LCISD_post_recv(LCIS_endpoint_t endpoint_pp,
 #include "backend/ibv/server_ibv.h"
 #include "backend/ibv/lcisi_ibv_detail.h"
 #endif
+#ifdef LCI_USE_SERVER_UCX
+#include "backend/ucx/server_ucx.h"
+#endif
 
 /* Wrapper functions */
 static inline void LCIS_server_init(LCI_device_t device, LCIS_server_t* s)

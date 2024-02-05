@@ -1,4 +1,4 @@
-#include "../src/api/lci.h"
+#include "../lci/api/lci.h"
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
