@@ -45,7 +45,7 @@ void test(Context ctx)
         double msg_rate_mps =
             ctx.config.send_window / latency_us * worker_thread_num;
         double bw_mbps = size * msg_rate_mps;
-        fprintf(stderr, "%d %.2f %.2f %.2f\n", size, latency_us, msg_rate_mps, bw_mbps);
+        printf("%d %.2f %.2f %.2f\n", size, latency_us, msg_rate_mps, bw_mbps);
       }
     }
   } else {

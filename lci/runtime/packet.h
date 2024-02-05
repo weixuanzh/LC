@@ -32,7 +32,7 @@ struct __attribute__((packed)) LCII_packet_rts_t {
   };
 };
 
-struct __attribute__((packed)) LCII_packet_rtr_iovec_info_t {
+struct __attribute__((packed)) LCII_packet_rtr_rbuffer_info_t {
   LCIS_rkey_t rkey;
   uintptr_t remote_addr_base;
   LCIS_offset_t remote_addr_offset;
@@ -43,19 +43,11 @@ struct __attribute__((packed)) LCII_packet_rtr_t {
       send_ctx; /* the address of the related context on the source side */
   LCII_rdv_type_t rdv_type; /* type of this rendezvous message */
   union {
-    // for LCI_LONG
-    struct {
-      LCIS_rkey_t rkey;
-      uintptr_t remote_addr_base;
-      LCIS_offset_t remote_addr_offset;
-      uint32_t
-          recv_ctx_key; /* the id of the related context on the target side */
-    };
-    // for LCI_IOVEC
-    struct {
-      uintptr_t recv_ctx;
-      struct LCII_packet_rtr_iovec_info_t remote_iovecs_p[0];
-    };
+    // When using writeimm protocol
+    uint32_t
+        recv_ctx_key; /* the id of the related context on the target side */
+    // when using write protocol
+    uintptr_t recv_ctx;
   };
   struct LCII_packet_rtr_rbuffer_info_t rbuffer_info_p[0];
 };

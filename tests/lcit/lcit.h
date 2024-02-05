@@ -79,7 +79,7 @@ void checkConfig(Config& config)
 
 void printConfig(const Config& config)
 {
-  fprintf(stderr, 
+  printf(
       "Configuration:\n"
       "op: %d\n"
       "send_dyn: %d\n"
@@ -723,7 +723,8 @@ void run(Context& ctx, Fn&& fn, Args&&... args)
         std::thread t(
           worker_handler<fn_t, typename std::remove_reference<Args>::type...>,
           +fn, i, args...);
-      if (ctx.config.thread_pin) set_affinity(t.native_handle(), (i + 1) % NPROCESSORS);
+      if (ctx.config.thread_pin) 
+        set_affinity(t.native_handle(), (i + 1) % NPROCESSORS);
       worker_pool.push_back(std::move(t));
       }
       // wait for workers to finish
@@ -757,7 +758,6 @@ void run(Context& ctx, Fn&& fn, Args&&... args)
     to_progress = true;
     fn(std::forward<Args>(args)...);
   }
-
 }
 
 static inline double wtime()
